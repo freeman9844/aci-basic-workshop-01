@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vn2-benchmark-image-cache
+  namespace: vn2-image-cache
+  annotations:
+    microsoft.containerinstance.virtualnode.imagecachepod: "true"
+spec:
+  nodeSelector:
+    kubernetes.io/os: linux
+    benchmark-path: standby
+  tolerations:
+    - key: virtual-kubelet.io/provider
+      operator: Exists
+      effect: NoSchedule
+  containers:
+    - name: benchmark
+      image: mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826
+      command: ["/bin/sh", "-c", "sleep 3600"]
+      resources:
+        requests: {cpu: 500m, memory: 512Mi}
+        limits: {cpu: "1", memory: 1Gi}

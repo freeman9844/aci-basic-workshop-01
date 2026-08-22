@@ -12,23 +12,27 @@ trap cleanup EXIT
 cleanup
 mkdir -p "$TMP/bin" "$TMP/logs" "$TMP/render" "$TMP/results" "$TMP/state"
 
-cat >"$TMP/bin/check-standby-pool.sh" <<'EOF'
+cat >"$TMP/bin/check-standby-pool.sh" <<'FAKE_STANDBY'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_LOG_DIR/standby.log"
 printf '{"health":"healthy","running":5}\n'
-EOF
+FAKE_STANDBY
 chmod +x "$TMP/bin/check-standby-pool.sh"
 
-cat >"$TMP/bin/az" <<'EOF'
+cat >"$TMP/bin/az" <<'FAKE_AZ'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_LOG_DIR/az.log"
+if [[ "${1-}" == "container" && "${2-}" == "list" && "${FAIL_AZ_CONTAINER_LIST:-0}" == "1" ]]; then
+  printf 'container list failed\n' >&2
+  exit 1
+fi
 printf '[{"name":"cg-test"}]\n'
-EOF
+FAKE_AZ
 chmod +x "$TMP/bin/az"
 
-cat >"$TMP/bin/python3" <<'EOF'
+cat >"$TMP/bin/python3" <<'FAKE_PYTHON'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_LOG_DIR/collector.log"
@@ -65,16 +69,16 @@ done
 
 mkdir -p "$(dirname "$output")"
 cat >"$output" <<JSON
-{"schema_version":1,"scenario":"$scenario","run":$run,"namespace":"$namespace","completion_reason":"$( [[ "$run" == "2" ]] && printf timeout || printf all_ready )"}
+{"schema_version":1,"scenario":"$scenario","run":$run,"namespace":"$namespace","completion_reason":"$( [[ "${COLLECTOR_EXIT_RUN:-}" == "$run" ]] && printf timeout || printf all_ready )"}
 JSON
 
-if [[ "$run" == "2" ]]; then
-  exit 2
+if [[ -n "${COLLECTOR_EXIT_RUN:-}" && "$run" == "$COLLECTOR_EXIT_RUN" ]]; then
+  exit "${COLLECTOR_EXIT_CODE:-2}"
 fi
-EOF
+FAKE_PYTHON
 chmod +x "$TMP/bin/python3"
 
-cat >"$TMP/bin/kubectl" <<'EOF'
+cat >"$TMP/bin/kubectl" <<'FAKE_KUBECTL'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_LOG_DIR/kubectl.log"
@@ -93,12 +97,24 @@ case "$cmd $subcmd" in
     printf 'namespace/%s created\n' "$namespace"
     ;;
   "describe pods")
+    if [[ "${FAIL_KUBECTL_DESCRIBE_PODS:-0}" == "1" ]]; then
+      printf 'describe pods failed\n' >&2
+      exit 1
+    fi
     printf 'Name: bench-1\n'
     ;;
   "get events")
+    if [[ "${FAIL_KUBECTL_GET_EVENTS:-0}" == "1" ]]; then
+      printf 'get events failed\n' >&2
+      exit 1
+    fi
     printf 'EVENTS\n'
     ;;
   "get nodes")
+    if [[ "${FAIL_KUBECTL_GET_NODES:-0}" == "1" ]]; then
+      printf 'get nodes failed\n' >&2
+      exit 1
+    fi
     printf '{"items":[{"metadata":{"name":"node-1"}}]}\n'
     ;;
   "get namespace")
@@ -120,15 +136,44 @@ case "$cmd $subcmd" in
     exit 1
     ;;
 esac
-EOF
+FAKE_KUBECTL
 chmod +x "$TMP/bin/kubectl"
 
-TEST_LOG_DIR="$TMP/logs" TEST_STATE_DIR="$TMP/state" \
-KUBECTL_BIN="$TMP/bin/kubectl" \
-AZ_BIN="$TMP/bin/az" \
-PYTHON_BIN="$TMP/bin/python3" \
-CHECK_STANDBY_BIN="$TMP/bin/check-standby-pool.sh" \
-"$ROOT/scripts/run-benchmark.sh" \
+reset_logs() {
+  : > "$TMP/logs/standby.log"
+  : > "$TMP/logs/az.log"
+  : > "$TMP/logs/collector.log"
+  : > "$TMP/logs/kubectl.log"
+  rm -f "$TMP/state"/*
+}
+
+reset_behavior() {
+  unset COLLECTOR_EXIT_RUN COLLECTOR_EXIT_CODE
+  unset FAIL_CREATE_NAMESPACE FAIL_KUBECTL_DESCRIBE_PODS FAIL_KUBECTL_GET_EVENTS
+  unset FAIL_KUBECTL_GET_NODES FAIL_AZ_CONTAINER_LIST
+}
+
+run_with_fakes() {
+  env \
+    TEST_LOG_DIR="$TMP/logs" \
+    TEST_STATE_DIR="$TMP/state" \
+    KUBECTL_BIN="$TMP/bin/kubectl" \
+    AZ_BIN="$TMP/bin/az" \
+    PYTHON_BIN="$TMP/bin/python3" \
+    CHECK_STANDBY_BIN="$TMP/bin/check-standby-pool.sh" \
+    COLLECTOR_EXIT_RUN="${COLLECTOR_EXIT_RUN-}" \
+    COLLECTOR_EXIT_CODE="${COLLECTOR_EXIT_CODE-}" \
+    FAIL_CREATE_NAMESPACE="${FAIL_CREATE_NAMESPACE-}" \
+    FAIL_KUBECTL_DESCRIBE_PODS="${FAIL_KUBECTL_DESCRIBE_PODS-}" \
+    FAIL_KUBECTL_GET_EVENTS="${FAIL_KUBECTL_GET_EVENTS-}" \
+    FAIL_KUBECTL_GET_NODES="${FAIL_KUBECTL_GET_NODES-}" \
+    FAIL_AZ_CONTAINER_LIST="${FAIL_AZ_CONTAINER_LIST-}" \
+    "$ROOT/scripts/run-benchmark.sh" "$@"
+}
+
+reset_behavior
+reset_logs
+run_with_fakes \
   --scenario vn2-ondemand \
   --runs 1 \
   --render-only \
@@ -158,14 +203,11 @@ if [[ -f "$TMP/logs/collector.log" ]]; then
   collector_lines_before="$(wc -l <"$TMP/logs/collector.log")"
 fi
 
+reset_behavior
+reset_logs
+FAIL_CREATE_NAMESPACE=1
 set +e
-TEST_LOG_DIR="$TMP/logs" TEST_STATE_DIR="$TMP/state" \
-KUBECTL_BIN="$TMP/bin/kubectl" \
-AZ_BIN="$TMP/bin/az" \
-PYTHON_BIN="$TMP/bin/python3" \
-CHECK_STANDBY_BIN="$TMP/bin/check-standby-pool.sh" \
-FAIL_CREATE_NAMESPACE=1 \
-"$ROOT/scripts/run-benchmark.sh" \
+run_with_fakes \
   --scenario aks \
   --runs 1 \
   --output-dir "$TMP/create-failure" >/dev/null 2>&1
@@ -184,14 +226,31 @@ if find "$TMP/create-failure" -name '*.yaml' -print -quit | grep -q .; then
   exit 1
 fi
 
+reset_behavior
+reset_logs
+run_with_fakes \
+  --scenario vn2-standby-uncached \
+  --runs 1 \
+  --resource-group rg-test \
+  --standby-pool pool-test \
+  --output-dir "$TMP/standby-once"
+
+test -f "$TMP/standby-once/raw/vn2-standby-uncached-run-1.json"
+test "$(wc -l <"$TMP/logs/standby.log")" -eq 2
+grep -F -- '--expect-running 5' "$TMP/logs/standby.log" >/dev/null
+grep -F -- '--resource-group rg-test' "$TMP/logs/standby.log" >/dev/null
+grep -F -- '--name pool-test' "$TMP/logs/standby.log" >/dev/null
+if find "$TMP/standby-once" -name '*.yaml' -print -quit | grep -q .; then
+  echo 'expected one-run standby path to clean generated manifests' >&2
+  exit 1
+fi
+
+reset_behavior
+reset_logs
+COLLECTOR_EXIT_RUN=2
+COLLECTOR_EXIT_CODE=2
 set +e
-TEST_LOG_DIR="$TMP/logs" TEST_STATE_DIR="$TMP/state" \
-KUBECTL_BIN="$TMP/bin/kubectl" \
-AZ_BIN="$TMP/bin/az" \
-PYTHON_BIN="$TMP/bin/python3" \
-CHECK_STANDBY_BIN="$TMP/bin/check-standby-pool.sh" \
-NAMESPACE_WAIT_INTERVAL_SECONDS=0 \
-"$ROOT/scripts/run-benchmark.sh" \
+run_with_fakes \
   --scenario vn2-standby-cached \
   --runs 2 \
   --resource-group rg-test \
@@ -231,7 +290,7 @@ if len(set(namespaces)) != 2:
     raise SystemExit(f"expected unique namespaces, got {namespaces}")
 PY
 
-test "$(wc -l <"$TMP/logs/standby.log")" -eq 2
+test "$(wc -l <"$TMP/logs/standby.log")" -eq 4
 grep -F -- '--expect-running 5' "$TMP/logs/standby.log" >/dev/null
 grep -F -- '--resource-group rg-test' "$TMP/logs/standby.log" >/dev/null
 grep -F -- '--name pool-test' "$TMP/logs/standby.log" >/dev/null
@@ -243,3 +302,38 @@ if find "$TMP/results" -name '*.yaml' -print -quit | grep -q .; then
   echo 'expected generated manifests to be cleaned after real runs' >&2
   exit 1
 fi
+
+reset_behavior
+reset_logs
+COLLECTOR_EXIT_RUN=1
+COLLECTOR_EXIT_CODE=2
+FAIL_KUBECTL_DESCRIBE_PODS=1
+FAIL_KUBECTL_GET_EVENTS=1
+FAIL_AZ_CONTAINER_LIST=1
+set +e
+run_with_fakes \
+  --scenario vn2-standby-cached \
+  --runs 1 \
+  --resource-group rg-test \
+  --standby-pool pool-test \
+  --output-dir "$TMP/diagnostic-failures" \
+  >"$TMP/diagnostic-failures.stdout" 2>"$TMP/diagnostic-failures.stderr"
+status=$?
+set -e
+
+[[ "$status" -eq 2 ]]
+test -s "$TMP/diagnostic-failures/raw/vn2-standby-cached-run-1.json"
+test -s "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/kubectl-describe-pods.txt"
+test -s "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/kubectl-events.txt"
+test -s "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/kubectl-nodes.json"
+test -s "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/az-container-list.json"
+grep -F 'exit_status: 1' "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/kubectl-describe-pods.txt" >/dev/null
+grep -F 'describe pods failed' "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/kubectl-describe-pods.txt" >/dev/null
+grep -F 'exit_status: 1' "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/kubectl-events.txt" >/dev/null
+grep -F 'get events failed' "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/kubectl-events.txt" >/dev/null
+grep -F 'exit_status: 0' "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/kubectl-nodes.json" >/dev/null
+grep -F 'exit_status: 1' "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/az-container-list.json" >/dev/null
+grep -F 'container list failed' "$TMP/diagnostic-failures/diagnostics/vn2-standby-cached-run-1/az-container-list.json" >/dev/null
+grep -F 'WARN: one or more diagnostic commands failed for vn2-standby-cached run 1' "$TMP/diagnostic-failures.stderr" >/dev/null
+test "$(wc -l <"$TMP/logs/standby.log")" -eq 2
+grep -F 'delete namespace' "$TMP/logs/kubectl.log" >/dev/null

@@ -23,6 +23,13 @@ output_dir=""
 resource_group=""
 standby_pool=""
 render_only="false"
+work_dir=""
+
+RUN_CREATE_STATUS=0
+RUN_COLLECTOR_STATUS=0
+RUN_DIAGNOSTICS_STATUS=0
+RUN_DELETE_STATUS=0
+RUN_WAIT_STATUS=0
 
 usage() {
   cat <<'EOF'
@@ -150,6 +157,12 @@ wait_for_standby_pool() {
     --interval-seconds "$STANDBY_INTERVAL_SECONDS" >/dev/null
 }
 
+cleanup_work_dir() {
+  if [[ -n "$work_dir" && -d "$work_dir" ]]; then
+    rm -rf "$work_dir"
+  fi
+}
+
 create_namespace() {
   local namespace="$1"
   "$KUBECTL_BIN" create namespace "$namespace" >/dev/null
@@ -171,23 +184,104 @@ wait_for_namespace_gone() {
   done
 }
 
-capture_output() {
+write_command_record() {
   local output_path="$1"
   shift
-  "$@" >"$output_path"
+  {
+    printf 'command:'
+    printf ' %q' "$@"
+    printf '\n'
+    printf 'exit_status: 0\n'
+    printf '%s\n' '--- stdout ---'
+    printf '\n%s\n' '--- stderr ---'
+  } >"$output_path"
 }
 
-write_aci_listing() {
+capture_command_record() {
   local output_path="$1"
-  if [[ -n "$resource_group" ]]; then
-    capture_output "$output_path" \
-      "$AZ_BIN" container list --resource-group "$resource_group" --output json
-    return
+  shift
+  local stdout_path="${output_path}.stdout"
+  local stderr_path="${output_path}.stderr"
+  local status=0
+
+  : >"$stdout_path"
+  : >"$stderr_path"
+
+  set +e
+  "$@" >"$stdout_path" 2>"$stderr_path"
+  status=$?
+  set -e
+
+  {
+    printf 'command:'
+    printf ' %q' "$@"
+    printf '\n'
+    printf 'exit_status: %s\n' "$status"
+    printf '%s\n' '--- stdout ---'
+    cat "$stdout_path"
+    printf '\n%s\n' '--- stderr ---'
+    cat "$stderr_path"
+  } >"$output_path"
+
+  rm -f "$stdout_path" "$stderr_path"
+  return "$status"
+}
+
+capture_diagnostics() {
+  local diagnostics_dir="$1"
+  local namespace="$2"
+  local status=0
+  local command_status=0
+
+  if capture_command_record \
+    "$diagnostics_dir/kubectl-describe-pods.txt" \
+    "$KUBECTL_BIN" describe pods -n "$namespace"; then
+    :
+  else
+    command_status=$?
+    if [[ "$status" -eq 0 ]]; then
+      status="$command_status"
+    fi
   fi
 
-  cat >"$output_path" <<'EOF'
-{"skipped":"--resource-group not provided"}
-EOF
+  if capture_command_record \
+    "$diagnostics_dir/kubectl-events.txt" \
+    "$KUBECTL_BIN" get events -n "$namespace" --sort-by=.lastTimestamp; then
+    :
+  else
+    command_status=$?
+    if [[ "$status" -eq 0 ]]; then
+      status="$command_status"
+    fi
+  fi
+
+  if capture_command_record \
+    "$diagnostics_dir/kubectl-nodes.json" \
+    "$KUBECTL_BIN" get nodes -o json; then
+    :
+  else
+    command_status=$?
+    if [[ "$status" -eq 0 ]]; then
+      status="$command_status"
+    fi
+  fi
+
+  if [[ -n "$resource_group" ]]; then
+    if capture_command_record \
+      "$diagnostics_dir/az-container-list.json" \
+      "$AZ_BIN" container list --resource-group "$resource_group" --output json; then
+      :
+    else
+      command_status=$?
+      if [[ "$status" -eq 0 ]]; then
+        status="$command_status"
+      fi
+    fi
+  else
+    write_command_record "$diagnostics_dir/az-container-list.json" skipped --resource-group not provided
+  fi
+
+  return "$status"
 }
 
 run_single_benchmark() {
@@ -196,24 +290,22 @@ run_single_benchmark() {
   local raw_path="$3"
   local diagnostics_dir="$4"
   local namespace="$5"
-  local create_status=0
-  local collector_status=0
-  local describe_status=0
-  local events_status=0
-  local nodes_status=0
-  local aci_status=0
-  local delete_status=0
-  local wait_status=0
+
+  RUN_CREATE_STATUS=0
+  RUN_COLLECTOR_STATUS=0
+  RUN_DIAGNOSTICS_STATUS=0
+  RUN_DELETE_STATUS=0
+  RUN_WAIT_STATUS=0
 
   mkdir -p "$(dirname "$raw_path")" "$diagnostics_dir"
 
   set +e
   create_namespace "$namespace"
-  create_status=$?
+  RUN_CREATE_STATUS=$?
   set -e
-  if [[ "$create_status" -ne 0 ]]; then
+  if [[ "$RUN_CREATE_STATUS" -ne 0 ]]; then
     rm -f "$manifest_path"
-    return "$create_status"
+    return "$RUN_CREATE_STATUS"
   fi
 
   set +e
@@ -226,39 +318,40 @@ run_single_benchmark() {
     --poll-interval "$POLL_INTERVAL_SECONDS" \
     --timeout-seconds "$TIMEOUT_SECONDS" \
     --output "$raw_path"
-  collector_status=$?
-  capture_output "$diagnostics_dir/kubectl-describe-pods.txt" \
-    "$KUBECTL_BIN" describe pods -n "$namespace"
-  describe_status=$?
-  capture_output "$diagnostics_dir/kubectl-events.txt" \
-    "$KUBECTL_BIN" get events -n "$namespace" --sort-by=.lastTimestamp
-  events_status=$?
-  capture_output "$diagnostics_dir/kubectl-nodes.json" \
-    "$KUBECTL_BIN" get nodes -o json
-  nodes_status=$?
-  write_aci_listing "$diagnostics_dir/az-container-list.json"
-  aci_status=$?
+  RUN_COLLECTOR_STATUS=$?
+
+  if capture_diagnostics "$diagnostics_dir" "$namespace"; then
+    RUN_DIAGNOSTICS_STATUS=0
+  else
+    RUN_DIAGNOSTICS_STATUS=$?
+  fi
 
   "$KUBECTL_BIN" delete namespace "$namespace" >/dev/null
-  delete_status=$?
+  RUN_DELETE_STATUS=$?
   wait_for_namespace_gone "$namespace"
-  wait_status=$?
+  RUN_WAIT_STATUS=$?
   rm -f "$manifest_path"
   set -e
 
-  for status in \
-    "$describe_status" \
-    "$events_status" \
-    "$nodes_status" \
-    "$aci_status" \
-    "$delete_status" \
-    "$wait_status"; do
-    if [[ "$status" -ne 0 ]]; then
-      return "$status"
-    fi
-  done
+  if [[ "$RUN_DIAGNOSTICS_STATUS" -ne 0 ]]; then
+    printf 'WARN: one or more diagnostic commands failed for %s run %s\n' \
+      "$scenario" "$run_number" >&2
+  fi
 
-  return "$collector_status"
+  if [[ "$RUN_COLLECTOR_STATUS" -ne 0 ]]; then
+    return "$RUN_COLLECTOR_STATUS"
+  fi
+  if [[ "$RUN_DIAGNOSTICS_STATUS" -ne 0 ]]; then
+    return "$RUN_DIAGNOSTICS_STATUS"
+  fi
+  if [[ "$RUN_DELETE_STATUS" -ne 0 ]]; then
+    return "$RUN_DELETE_STATUS"
+  fi
+  if [[ "$RUN_WAIT_STATUS" -ne 0 ]]; then
+    return "$RUN_WAIT_STATUS"
+  fi
+
+  return 0
 }
 
 if [[ "$render_only" == "true" ]]; then
@@ -270,9 +363,14 @@ fi
 
 work_dir="$output_dir/.run-benchmark"
 mkdir -p "$work_dir"
+trap cleanup_work_dir EXIT
 
 for run_number in $(seq 1 "$runs"); do
-  wait_for_standby_pool
+  if wait_for_standby_pool; then
+    :
+  else
+    exit "$?"
+  fi
 
   manifest_path="$work_dir/${scenario}-run-${run_number}.yaml"
   raw_path="$output_dir/raw/${scenario}-run-${run_number}.json"
@@ -287,12 +385,25 @@ for run_number in $(seq 1 "$runs"); do
     run_status=$?
   fi
 
+  post_run_standby_status=0
+  if [[ "$RUN_CREATE_STATUS" -eq 0 ]]; then
+    if wait_for_standby_pool; then
+      :
+    else
+      post_run_standby_status=$?
+    fi
+  fi
+
   if [[ "$run_status" -eq 2 ]]; then
     exit 2
   fi
   if [[ "$run_status" -ne 0 ]]; then
     exit "$run_status"
   fi
+  if [[ "$post_run_standby_status" -ne 0 ]]; then
+    exit "$post_run_standby_status"
+  fi
 done
 
-rmdir "$work_dir" 2>/dev/null || true
+trap - EXIT
+cleanup_work_dir

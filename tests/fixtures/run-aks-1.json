@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "scenario": "aks",
+  "run": 1,
+  "pods": [
+    {
+      "name": "bench-aks-1-pod-1",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 1200.0,
+      "create_to_scheduled_ms": 100.0,
+      "scheduled_to_ready_ms": 1100.0,
+      "phase": "Succeeded",
+      "node_name": "aks-nodepool1-1234-vmss000000"
+    },
+    {
+      "name": "bench-aks-1-pod-2",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 1300.0,
+      "create_to_scheduled_ms": 120.0,
+      "scheduled_to_ready_ms": 1180.0,
+      "phase": "Succeeded",
+      "node_name": "aks-nodepool1-1234-vmss000000"
+    },
+    {
+      "name": "bench-aks-1-pod-3",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 1400.0,
+      "create_to_scheduled_ms": 130.0,
+      "scheduled_to_ready_ms": 1270.0,
+      "phase": "Succeeded",
+      "node_name": "aks-nodepool1-1234-vmss000000"
+    },
+    {
+      "name": "bench-aks-1-pod-4",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 1500.0,
+      "create_to_scheduled_ms": 140.0,
+      "scheduled_to_ready_ms": 1360.0,
+      "phase": "Succeeded",
+      "node_name": "aks-nodepool1-1234-vmss000000"
+    },
+    {
+      "name": "bench-aks-1-pod-5",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 1600.0,
+      "create_to_scheduled_ms": 150.0,
+      "scheduled_to_ready_ms": 1450.0,
+      "phase": "Succeeded",
+      "node_name": "aks-nodepool1-1234-vmss000000"
+    }
+  ],
+  "batch": {
+    "first_ready_ms": 1200.0,
+    "all_ready_ms": 1600.0
+  }
+}

@@ -184,20 +184,25 @@ find results/diagnostics -maxdepth 2 -type f -path '*/vn2-ondemand-run-*/*' | so
 
 같은 시나리오를 다시 실행하면 `results/raw/<scenario>-run-*` 와 `results/diagnostics/<scenario>-run-*` 고정 경로가 덮어써집니다. 따라서 retry 전에 반드시 기존 evidence를 archive 해야 합니다.
 
+Run the archive/rerun example only for the scenario that failed. Do not archive or rerun a scenario that already succeeded.
+
 ```bash
-archive_failed_attempts aks
+# Example: rerun only the failed scenario after reviewing evidence.
+# Uncomment one block, not both.
 
-./scripts/run-benchmark.sh \
-  --scenario aks \
-  --runs 3 \
-  --output-dir results
+# If aks failed:
+# archive_failed_attempts aks
+# ./scripts/run-benchmark.sh \
+#   --scenario aks \
+#   --runs 3 \
+#   --output-dir results
 
-archive_failed_attempts vn2-ondemand
-
-./scripts/run-benchmark.sh \
-  --scenario vn2-ondemand \
-  --runs 3 \
-  --output-dir results
+# If vn2-ondemand failed:
+# archive_failed_attempts vn2-ondemand
+# ./scripts/run-benchmark.sh \
+#   --scenario vn2-ondemand \
+#   --runs 3 \
+#   --output-dir results
 ```
 
 regular AKS 노드는 첫 run 에서만 이미지가 cold 상태일 수 있고, 두 번째 이후 run은 같은 VM의 node image cache 덕분에 더 빨라질 수 있습니다. 이 워크숍은 그 차이를 평균값으로 덮지 않기 위해 run별 JSON 을 그대로 보관합니다.
@@ -219,7 +224,7 @@ regular AKS 노드는 첫 run 에서만 이미지가 cold 상태일 수 있고, 
 
 | 증상 | 원인 후보 | 확인 명령 | 조치 |
 | --- | --- | --- | --- |
-| `aks` 또는 `vn2-ondemand` 가 `RC=2` 로 끝난다 | benchmark sample timeout/failure가 raw JSON 기록 뒤에 발생함 | `jq '{scenario, run, batch, pods: [.pods[] | {name, terminal_state, create_to_ready_ms, node_name}]}' results/raw/aks-run-1.json`, `sed -n '1,160p' results/diagnostics/aks-run-1/kubectl-events.txt`, `sed -n '1,160p' results/diagnostics/vn2-ondemand-run-1/kubectl-describe-pods.txt` | shell을 닫지 말고 evidence를 본다. runner가 남은 run을 중단했으므로 먼저 `archive_failed_attempts <scenario>` 를 실행한 뒤 같은 표준 명령을 다시 실행 |
+| `aks` 또는 `vn2-ondemand` 가 `RC=2` 로 끝난다 | benchmark sample timeout/failure가 raw JSON 기록 뒤에 발생함 | `jq '{scenario, run, batch, pods: [.pods[] | {name, terminal_state, create_to_ready_ms, node_name}]}' results/raw/aks-run-1.json`, `sed -n '1,160p' results/diagnostics/aks-run-1/kubectl-events.txt`, `sed -n '1,160p' results/diagnostics/vn2-ondemand-run-1/kubectl-describe-pods.txt` | shell을 닫지 말고 evidence를 본다. runner가 남은 run을 중단했으므로 먼저 `archive_failed_attempts <scenario>` 를 실행한 뒤 실패한 시나리오만 같은 표준 명령으로 다시 실행 |
 | raw 파일 수가 6개보다 적다 | 어느 시나리오에서든 첫 failed sample 이후 남은 run이 중단됨 | `find results/raw -maxdepth 1 -type f -name 'aks-run-*.json' | sort`, `find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort` | 비정상이 아니다. raw/diagnostics를 보존하고, retry 전에 archive 한 뒤 필요한 시나리오만 다시 실행 |
 | diagnostics 파일이 비어 보인다 | namespace가 빠르게 정리되었거나 `az-container-list.json` 이 skip record일 수 있음 | `find results/diagnostics -maxdepth 2 -type f -path '*/aks-run-*/*' | sort`, `cat results/diagnostics/aks-run-1/az-container-list.json`, `cat results/diagnostics/vn2-ondemand-run-1/az-container-list.json` | 파일이 존재하면 우선 evidence는 확보된 것임. 삭제하지 말고 다음 모듈로 진행 |
 

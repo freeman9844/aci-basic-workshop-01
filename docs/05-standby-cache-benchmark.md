@@ -153,8 +153,13 @@ case "$UNCACHED_RC" in
     ;;
   2)
     printf 'RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.\n' >&2
-    printf 'The runner stops remaining runs after the first failed sample.\n' >&2
-    printf 'Keep this Cloud Shell session open, archive the fixed paths below, and rerun only after you have reviewed the evidence.\n' >&2
+    printf 'If the collector failed after sample creation, raw JSON and diagnostics already exist for this scenario.\n' >&2
+    printf 'RC=2 can also mean the internal standby pool pre-run or post-run check reported degraded health, so the current run may not have new raw JSON.\n' >&2
+    printf 'Inspect any existing results/raw and results/diagnostics for this scenario, then run check_pool_state "standby healthy check" 5 (or the matching recycle/refill check) before retrying only vn2-standby-uncached.\n' >&2
+    ;;
+  3)
+    printf 'RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.\n' >&2
+    printf 'Preserve this Cloud Shell session, run check_pool_state "standby healthy check" 5 (or the matching recycle/refill check), recover/refill the pool, archive only any paths that actually exist for this scenario, and then retry only vn2-standby-uncached.\n' >&2
     ;;
   *)
     printf 'Unexpected vn2-standby-uncached benchmark failure RC=%s\n' "$UNCACHED_RC" >&2
@@ -275,8 +280,13 @@ case "$CACHED_RC" in
     ;;
   2)
     printf 'RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.\n' >&2
-    printf 'The runner stops remaining runs after the first failed sample.\n' >&2
-    printf 'Keep this Cloud Shell session open, archive the fixed paths below, and rerun only after you have reviewed the evidence.\n' >&2
+    printf 'If the collector failed after sample creation, raw JSON and diagnostics already exist for this scenario.\n' >&2
+    printf 'RC=2 can also mean the internal standby pool pre-run or post-run check reported degraded health, so the current run may not have new raw JSON.\n' >&2
+    printf 'Inspect any existing results/raw and results/diagnostics for this scenario, then run check_pool_state "standby healthy check" 5 (or the matching recycle/refill check) before retrying only vn2-standby-cached.\n' >&2
+    ;;
+  3)
+    printf 'RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.\n' >&2
+    printf 'Preserve this Cloud Shell session, run check_pool_state "standby healthy check" 5 (or the matching recycle/refill check), recover/refill the pool, archive only any paths that actually exist for this scenario, and then retry only vn2-standby-cached.\n' >&2
     ;;
   *)
     printf 'Unexpected vn2-standby-cached benchmark failure RC=%s\n' "$CACHED_RC" >&2
@@ -286,24 +296,29 @@ esac
 
 같은 시나리오를 다시 실행하면 `results/raw/<scenario>-run-*` 와 `results/diagnostics/<scenario>-run-*` 고정 경로가 덮어써집니다. retry 전에 반드시 archive 하십시오.
 
+Run the archive/rerun example only for the standby scenario that failed. Do not archive or rerun a standby scenario that already succeeded.
+
 ```bash
-archive_failed_attempts vn2-standby-uncached
+# Example: rerun only the failed standby scenario after evidence review and any pool recovery.
+# Uncomment one block, not both.
 
-./scripts/run-benchmark.sh \
-  --scenario vn2-standby-uncached \
-  --runs 3 \
-  --resource-group "$RG" \
-  --standby-pool "$STANDBY_POOL" \
-  --output-dir results
+# If vn2-standby-uncached failed:
+# archive_failed_attempts vn2-standby-uncached
+# ./scripts/run-benchmark.sh \
+#   --scenario vn2-standby-uncached \
+#   --runs 3 \
+#   --resource-group "$RG" \
+#   --standby-pool "$STANDBY_POOL" \
+#   --output-dir results
 
-archive_failed_attempts vn2-standby-cached
-
-./scripts/run-benchmark.sh \
-  --scenario vn2-standby-cached \
-  --runs 3 \
-  --resource-group "$RG" \
-  --standby-pool "$STANDBY_POOL" \
-  --output-dir results
+# If vn2-standby-cached failed:
+# archive_failed_attempts vn2-standby-cached
+# ./scripts/run-benchmark.sh \
+#   --scenario vn2-standby-cached \
+#   --runs 3 \
+#   --resource-group "$RG" \
+#   --standby-pool "$STANDBY_POOL" \
+#   --output-dir results
 ```
 
 cached raw evidence는 다음과 같이 확인합니다.
@@ -335,7 +350,8 @@ Scenario C와 Scenario D를 비교할 때는 숫자만 보지 말고 pool recycl
 | 증상 | 원인 후보 | 확인 명령 | 조치 |
 | --- | --- | --- | --- |
 | 시작 전 healthy 5가 되지 않는다 | standby pool degraded 또는 refill 지연 | `./scripts/check-standby-pool.sh -g "$RG" -n "$STANDBY_POOL" --expect-running 5 --timeout-seconds 1200 --interval-seconds 15`, `az standby-container-group-pool status -g "$RG" -n "$STANDBY_POOL" --version latest --output json` | `RC=2/3` 를 evidence로 보고 shell을 유지한 채 복구 후 같은 check를 다시 실행 |
-| `vn2-standby-uncached` 또는 `vn2-standby-cached` 가 `RC=2` 로 끝난다 | benchmark sample timeout/failure가 raw JSON 기록 뒤에 발생함 | `find results/diagnostics -maxdepth 2 -type f -path '*/vn2-standby-uncached-run-*/*' | sort`, `sed -n '1,160p' results/diagnostics/vn2-standby-cached-run-1/kubectl-events.txt` | runner가 남은 run을 중단했으므로 먼저 `archive_failed_attempts <scenario>` 를 실행한 뒤 같은 표준 명령을 다시 실행 |
+| `vn2-standby-uncached` 또는 `vn2-standby-cached` 가 `RC=2` 로 끝난다 | collector sample failure 뒤 evidence가 생겼거나, 내부 standby pool pre/post check 가 degraded 를 보고함 | `find results/raw -maxdepth 1 -type f -name 'vn2-standby-*-run-*.json' | sort`, `find results/diagnostics -maxdepth 2 -type f -path '*/vn2-standby-uncached-run-*/*' | sort`, `check_pool_state "standby healthy check" 5` | 현재 run raw 가 없을 수도 있으므로 기존 evidence부터 본다. pool 이 degraded 면 복구 후 다시 확인하고, `archive_failed_attempts <scenario>` 는 실제로 존재하는 경로에만 적용한 뒤 실패한 standby 시나리오만 다시 실행 |
+| `vn2-standby-uncached` 또는 `vn2-standby-cached` 가 `RC=3` 로 끝난다 | 내부 standby pool pre-run 또는 post-run check 가 timeout 전에 expected running count 에 도달하지 못함 | `check_pool_state "standby healthy check" 5`, `check_pool_state "standby recycle-to-zero check" 0`, `check_pool_state "standby refill check" 5`, `az standby-container-group-pool status -g "$RG" -n "$STANDBY_POOL" --version latest --output json` | shell 을 유지한 채 pool recovery/refill 상태를 먼저 해결한다. 그 후 실제로 존재하는 raw/diagnostics 경로만 archive 하고 실패한 standby 시나리오만 다시 실행 |
 | running 5 확인 뒤에도 cached run 해석이 애매하다 | ready capacity는 복구됐지만 image caching 완료 여부는 별도 증거가 필요함 | `jq '{scenario, run, batch}' results/raw/vn2-standby-cached-run-1.json`, `cat results/diagnostics/vn2-standby-cached-run-1/az-container-list.json`, `sed -n '1,160p' results/diagnostics/vn2-standby-cached-run-1/kubectl-events.txt` | running 5는 capacity/refill 확인으로만 쓰고, image caching 효과는 per-run JSON과 diagnostics로 판단 |
 
 ## 이전/다음

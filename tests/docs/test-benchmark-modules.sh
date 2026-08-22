@@ -58,6 +58,11 @@ required_04 = [
     "find results/diagnostics -maxdepth 1 -mindepth 1 -type d -name \"${scenario}-run-*\" | sort",
     "archive_failed_attempts aks",
     "archive_failed_attempts vn2-ondemand",
+    "Run the archive/rerun example only for the scenario that failed. Do not archive or rerun a scenario that already succeeded.",
+    "# Example: rerun only the failed scenario after reviewing evidence.",
+    "# Uncomment one block, not both.",
+    "# If aks failed:",
+    "# If vn2-ondemand failed:",
     "두 시나리오 명령이 모두 0으로 끝났을 때만 정확히 6개의 raw 파일을 기대합니다.",
     "regular AKS",
     "VN2 OnDemand",
@@ -105,6 +110,15 @@ required_05 = [
     "CACHED_RC=$?",
     "archive_failed_attempts vn2-standby-uncached",
     "archive_failed_attempts vn2-standby-cached",
+    "If the collector failed after sample creation, raw JSON and diagnostics already exist for this scenario.",
+    "RC=2 can also mean the internal standby pool pre-run or post-run check reported degraded health, so the current run may not have new raw JSON.",
+    "RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.",
+    "Preserve this Cloud Shell session, run check_pool_state",
+    "archive only any paths that actually exist for this scenario",
+    "Run the archive/rerun example only for the standby scenario that failed. Do not archive or rerun a standby scenario that already succeeded.",
+    "# Example: rerun only the failed standby scenario after evidence review and any pool recovery.",
+    "# If vn2-standby-uncached failed:",
+    "# If vn2-standby-cached failed:",
     "results/failed-attempts/${scenario}-",
     "running 5 after recycle proves refill capacity, not by itself that image caching finished.",
     "Use the per-run JSON and diagnostics to judge whether image caching actually helped.",
@@ -166,5 +180,51 @@ if text05.count("--refill-policy always") < 2:
 
 if text05.count("./scripts/check-standby-pool.sh -g \"$RG\" -n \"$STANDBY_POOL\" \\") < 1:
     raise SystemExit("docs/05-standby-cache-benchmark.md must show the standby checker command")
+
+uncached_case_match = re.search(r'case "\$UNCACHED_RC" in\n(.*?)\nesac', text05, re.S)
+if not uncached_case_match:
+    raise SystemExit('docs/05-standby-cache-benchmark.md is missing the UNCACHED_RC case block')
+uncached_case = uncached_case_match.group(1)
+for snippet in (
+    '\n  2)\n',
+    '\n  3)\n',
+    '\n  *)\n',
+    'RC=2 can also mean the internal standby pool pre-run or post-run check reported degraded health, so the current run may not have new raw JSON.',
+    'RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.',
+    'check_pool_state "standby healthy check" 5',
+    'archive only any paths that actually exist for this scenario',
+):
+    if snippet not in uncached_case:
+        raise SystemExit(f'docs/05-standby-cache-benchmark.md UNCACHED_RC case is missing: {snippet}')
+
+cached_case_match = re.search(r'case "\$CACHED_RC" in\n(.*?)\nesac', text05, re.S)
+if not cached_case_match:
+    raise SystemExit('docs/05-standby-cache-benchmark.md is missing the CACHED_RC case block')
+cached_case = cached_case_match.group(1)
+for snippet in (
+    '\n  2)\n',
+    '\n  3)\n',
+    '\n  *)\n',
+    'RC=2 can also mean the internal standby pool pre-run or post-run check reported degraded health, so the current run may not have new raw JSON.',
+    'RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.',
+    'check_pool_state "standby healthy check" 5',
+    'archive only any paths that actually exist for this scenario',
+):
+    if snippet not in cached_case:
+        raise SystemExit(f'docs/05-standby-cache-benchmark.md CACHED_RC case is missing: {snippet}')
+
+if re.search(
+    r'```bash\narchive_failed_attempts aks\n\n\./scripts/run-benchmark\.sh .*?archive_failed_attempts vn2-ondemand\n\n\./scripts/run-benchmark\.sh',
+    text04,
+    re.S,
+):
+    raise SystemExit('docs/04-baseline-ondemand-benchmark.md must not show an unconditional paired archive/rerun block')
+
+if re.search(
+    r'```bash\narchive_failed_attempts vn2-standby-uncached\n\n\./scripts/run-benchmark\.sh .*?archive_failed_attempts vn2-standby-cached\n\n\./scripts/run-benchmark\.sh',
+    text05,
+    re.S,
+):
+    raise SystemExit('docs/05-standby-cache-benchmark.md must not show an unconditional paired standby archive/rerun block')
 
 PY

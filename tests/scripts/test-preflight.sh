@@ -136,7 +136,7 @@ set_valid_defaults() {
   write_file "$TMP/provider-standby.json" '{"namespace":"Microsoft.StandbyPool","registrationState":"Registered"}'
   write_file "$TMP/feature.json" '{"name":"StandbyContainerGroupPoolPreview","properties":{"state":"Registered"}}'
   write_file "$TMP/role-assignments.json" '[{"roleDefinitionName":"Owner","scope":"/providers/Microsoft.Management/managementGroups/example"}]'
-  write_file "$TMP/vm-skus.json" '[{"name":"Standard_D8s_v5","restrictions":[]}]'
+  write_file "$TMP/vm-skus.json" '[{"name":"Standard_D8s_v5","locations":["koreacentral"],"restrictions":[]}]'
   write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":10,"limit":32}]'
   write_file "$TMP/aci-usage.json" '[{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20}]'
   write_file "$TMP/kubectl-version.json" '{"clientVersion":{"gitVersion":"v1.30.2"}}'
@@ -198,6 +198,18 @@ assert payload["vn2_chart_version"] == "1.3410.26081102"
 assert payload["benchmark_image"] == "mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
 PY
 baseline_environment_json="$(cat "$ENVIRONMENT_JSON")"
+
+set_valid_defaults
+write_file "$TMP/vm-skus.json" '[{"name":"Standard_D8s_v5","locations":["koreacentral"],"restrictions":[{"type":"Location","reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"]}}]}]'
+set +e
+restricted_sku_output="$(run_preflight 2>&1)"
+restricted_sku_status=$?
+set -e
+[[ "$restricted_sku_status" -ne 0 ]]
+grep -F 'ERROR: VM size Standard_D8s_v5 is restricted in koreacentral.' <<<"$restricted_sku_output" >/dev/null
+grep -F '"reasonCode": "NotAvailableForSubscription"' <<<"$restricted_sku_output" >/dev/null
+grep -F '"locations": [' <<<"$restricted_sku_output" >/dev/null
+[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
 AZ_FEATURE_MODE='resource-not-found'

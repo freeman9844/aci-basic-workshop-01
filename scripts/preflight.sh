@@ -189,16 +189,44 @@ fi
 
 vm_skus_json="$("$AZ_BIN" vm list-skus --location "$location" --resource-type virtualMachines --output json)"
 set +e
-sku_available="$(jq -r --arg size "$vm_size" '
-  any(.[]; (.name // "") == $size)
+matching_vm_skus_json="$(jq -c --arg size "$vm_size" --arg location "$location" '
+  [
+    .[]
+    | select((.name // "") == $size)
+    | select(
+        (
+          ((.locations // []) | length) == 0
+          and ((.locationInfo // []) | length) == 0
+        )
+        or (((.locations // []) | map(ascii_downcase) | index($location | ascii_downcase)) != null)
+        or (((.locationInfo // []) | map(.location // "" | ascii_downcase) | index($location | ascii_downcase)) != null)
+      )
+    | {
+        name: (.name // ""),
+        locations: (.locations // []),
+        locationInfo: (.locationInfo // []),
+        restrictions: (.restrictions // [])
+      }
+  ]
 ' <<<"$vm_skus_json" 2>/dev/null)"
-sku_available_status=$?
+matching_vm_skus_status=$?
 set -e
-if [[ "$sku_available_status" -ne 0 || -z "$sku_available" || "$sku_available" == "null" ]]; then
+if [[ "$matching_vm_skus_status" -ne 0 || -z "$matching_vm_skus_json" || "$matching_vm_skus_json" == "null" ]]; then
   die "failed to parse VM SKU availability"
 fi
-if [[ "$sku_available" != "true" ]]; then
+matching_vm_skus_count="$(jq_string "$matching_vm_skus_json" 'length' 'matching VM SKU entries')"
+if [[ "$matching_vm_skus_count" -eq 0 ]]; then
   die "VM size $vm_size is not available in $location"
+fi
+
+unrestricted_vm_sku_count="$(jq_string "$matching_vm_skus_json" '
+  map(select((.restrictions // []) | length == 0)) | length
+' 'unrestricted VM SKU entries')"
+if [[ "$unrestricted_vm_sku_count" -eq 0 ]]; then
+  printf 'ERROR: VM size %s is restricted in %s.\n' "$vm_size" "$location" >&2
+  printf 'Restriction details:\n' >&2
+  jq '.' <<<"$matching_vm_skus_json" >&2
+  exit 1
 fi
 
 vm_usage_json="$("$AZ_BIN" vm list-usage --location "$location" --output json)"

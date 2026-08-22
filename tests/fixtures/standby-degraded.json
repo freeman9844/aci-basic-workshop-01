@@ -1,0 +1,28 @@
+{
+  "status": {
+    "code": "HealthState/Degraded"
+  },
+  "provisioningState": "Updating",
+  "instanceCountSummary": [
+    {
+      "instanceCountsByState": [
+        {
+          "state": "running",
+          "count": 4
+        },
+        {
+          "state": "creating",
+          "count": 1
+        },
+        {
+          "state": "starting",
+          "count": 0
+        },
+        {
+          "state": "deleting",
+          "count": 0
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "Status": {
+    "Code": "HealthState/HEALTHY"
+  },
+  "ProvisioningState": "Succeeded",
+  "InstanceCountSummary": [
+    {
+      "InstanceCountsByState": [
+        {
+          "State": "Running",
+          "Count": 5
+        },
+        {
+          "State": "Creating",
+          "Count": 0
+        },
+        {
+          "State": "Starting",
+          "Count": 0
+        },
+        {
+          "State": "Deleting",
+          "Count": 0
+        }
+      ]
+    }
+  ]
+}

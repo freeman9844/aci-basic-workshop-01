@@ -13,6 +13,10 @@ standby_namespace="${STANDBY_NAMESPACE:-vn2-standby}"
 ondemand_release="${ONDEMAND_RELEASE:-}"
 standby_release="${STANDBY_RELEASE:-}"
 assume_yes="false"
+subscription_id=""
+resolved_resource_group=""
+group_exists_result=""
+group_exists_error=""
 
 declare -a standby_pools=()
 declare -a operation_failures=()
@@ -119,10 +123,78 @@ fail_with_residuals() {
   exit 1
 }
 
-group_exists() {
-  local output
-  output="$("$AZ_BIN" group exists --name "$resource_group")"
-  [[ "$output" == "true" ]]
+resolve_subscription_id() {
+  local output status
+  set +e
+  output="$("$AZ_BIN" account show --query id --output tsv 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -ne 0 ]]; then
+    die "Azure CLI error while resolving subscription ID: ${output:-command failed}"
+  fi
+  if [[ -z "$output" ]]; then
+    die "Azure CLI returned an empty subscription ID"
+  fi
+
+  subscription_id="$output"
+}
+
+check_group_exists() {
+  local output status
+  set +e
+  output="$("$AZ_BIN" group exists --name "$resource_group" 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -ne 0 ]]; then
+    group_exists_result="error"
+    group_exists_error="${output:-command failed}"
+    return 0
+  fi
+
+  case "$output" in
+    true|false)
+      group_exists_result="$output"
+      group_exists_error=""
+      ;;
+    *)
+      group_exists_result="error"
+      group_exists_error="unexpected output: ${output:-<empty>}"
+      ;;
+  esac
+}
+
+resolve_resource_group_target() {
+  local output status
+
+  resolve_subscription_id
+  check_group_exists
+
+  case "$group_exists_result" in
+    false)
+      printf 'INFO: resource group %s already absent.\n' "$resource_group"
+      exit 0
+      ;;
+    error)
+      die "Azure CLI error while checking resource group $resource_group in subscription $subscription_id: $group_exists_error"
+      ;;
+  esac
+
+  set +e
+  output="$("$AZ_BIN" group show --name "$resource_group" --query name --output tsv 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -ne 0 ]]; then
+    die "Azure CLI error while resolving resource group $resource_group in subscription $subscription_id: ${output:-command failed}"
+  fi
+  if [[ -z "$output" ]]; then
+    die "Azure CLI returned an empty resource group name for $resource_group in subscription $subscription_id"
+  fi
+
+  resolved_resource_group="$output"
+  resource_group="$resolved_resource_group"
 }
 
 resolve_standby_pools() {
@@ -133,11 +205,7 @@ resolve_standby_pools() {
   set -e
 
   if [[ "$status" -ne 0 ]]; then
-    if group_exists; then
-      die "failed to list standby pools in $resource_group: $output"
-    fi
-    printf 'INFO: resource group %s already absent.\n' "$resource_group"
-    exit 0
+    die "Azure CLI error while listing standby pools in $resource_group: ${output:-command failed}"
   fi
 
   standby_pools=()
@@ -162,10 +230,9 @@ run_tolerant() {
 }
 
 prompt_for_confirmation() {
-  local subscription_id pools_display confirmation
+  local pools_display confirmation
   local -a prompt_pools=("$@")
 
-  subscription_id="$("$AZ_BIN" account show --query id --output tsv)"
   pools_display='(none found)'
   if ((${#prompt_pools[@]} > 0)); then
     pools_display="$(printf '%s, ' "${prompt_pools[@]}")"
@@ -200,17 +267,24 @@ wait_for_resource_group_gone() {
   started_at="$SECONDS"
 
   while true; do
-    exists_output="$("$AZ_BIN" group exists --name "$resource_group")"
-    if [[ "$exists_output" == "false" ]]; then
-      printf 'Cleanup completed.\n'
-      return 0
-    fi
+    check_group_exists
+    case "$group_exists_result" in
+      false)
+        printf 'Cleanup completed.\n'
+        return 0
+        ;;
+      error)
+        fail_with_residuals "Azure CLI error while polling resource group $resource_group: $group_exists_error"
+        ;;
+    esac
     if (( SECONDS - started_at >= DELETE_TIMEOUT_SECONDS )); then
       fail_with_residuals "resource group $resource_group still exists after ${DELETE_TIMEOUT_SECONDS}s"
     fi
     sleep "$POLL_INTERVAL_SECONDS"
   done
 }
+
+resolve_resource_group_target
 
 if [[ "$assume_yes" != "true" ]]; then
   resolve_standby_pools

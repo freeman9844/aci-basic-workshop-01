@@ -77,16 +77,20 @@ case "$*" in
   "account show --query id --output tsv")
     printf '%s\n' "${AZ_SUBSCRIPTION_ID:-00000000-0000-0000-0000-000000000001}"
     ;;
+  "group show --name rg-test --query name --output tsv")
+    case "${AZ_MODE:-success}" in
+      success|prompt|env-fallback|stuck|poll-error)
+        printf 'rg-test\n'
+        ;;
+      *)
+        printf 'Unexpected group show for AZ_MODE=%s\n' "${AZ_MODE:-}" >&2
+        exit 1
+        ;;
+    esac
+    ;;
   "standby-container-group-pool list --resource-group rg-test --query [].name --output tsv")
     case "${AZ_MODE:-success}" in
-      success|prompt|env-fallback)
-        printf '%s\n' "${AZ_POOL_NAMES:-standby-pool-a}"
-        ;;
-      missing-rg)
-        printf 'ResourceGroupNotFound\n' >&2
-        exit 3
-        ;;
-      stuck)
+      success|prompt|env-fallback|stuck|poll-error)
         printf '%s\n' "${AZ_POOL_NAMES:-standby-pool-a}"
         ;;
       *)
@@ -102,24 +106,36 @@ case "$*" in
     exit 0
     ;;
   "group exists --name rg-test")
+    count=$((count + 1))
+    printf '%s' "$count" > "$count_file"
     case "${AZ_MODE:-success}" in
       success|env-fallback)
-        printf 'false\n'
-        ;;
-      prompt)
-        count=$((count + 1))
-        printf '%s' "$count" > "$count_file"
         if [[ "$count" -eq 1 ]]; then
           printf 'true\n'
         else
           printf 'false\n'
         fi
         ;;
+      prompt)
+        printf 'true\n'
+        ;;
       missing-rg)
         printf 'false\n'
         ;;
+      exists-error)
+        printf 'group exists boom\n' >&2
+        exit 9
+        ;;
       stuck)
         printf 'true\n'
+        ;;
+      poll-error)
+        if [[ "$count" -eq 1 ]]; then
+          printf 'true\n'
+        else
+          printf 'poll exists boom\n' >&2
+          exit 10
+        fi
         ;;
       *)
         printf 'Unexpected AZ_MODE=%s\n' "${AZ_MODE:-}" >&2
@@ -163,6 +179,9 @@ import sys
 
 lines = [line.strip() for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
 expected = [
+    "az account show --query id --output tsv",
+    "az group exists --name rg-test",
+    "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
@@ -188,6 +207,46 @@ missing_output="$(run_cleanup \
   --yes)"
 
 grep -F 'already absent' <<<"$missing_output" >/dev/null
+python3 - "$TMP/logs/commands.log" <<'PY'
+import sys
+
+lines = [line.strip() for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+expected = [
+    "az account show --query id --output tsv",
+    "az group exists --name rg-test",
+]
+if lines != expected:
+    raise SystemExit(f"unexpected missing-rg command order: {lines!r}")
+PY
+
+rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
+set +e
+exists_error_output="$(run_cleanup \
+  AZ_MODE=exists-error \
+  KUBECTL_MODE=cluster-missing \
+  HELM_MODE=cluster-missing \
+  "$ROOT/scripts/cleanup.sh" \
+  --resource-group rg-test \
+  --ondemand-namespace vn2-ondemand \
+  --standby-namespace vn2-standby \
+  --yes 2>&1)"
+exists_error_status=$?
+set -e
+
+[[ "$exists_error_status" -ne 0 ]]
+grep -F 'Azure CLI error while checking resource group rg-test' <<<"$exists_error_output" >/dev/null
+grep -F 'group exists boom' <<<"$exists_error_output" >/dev/null
+python3 - "$TMP/logs/commands.log" <<'PY'
+import sys
+
+lines = [line.strip() for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+expected = [
+    "az account show --query id --output tsv",
+    "az group exists --name rg-test",
+]
+if lines != expected:
+    raise SystemExit(f"unexpected exists-error command order: {lines!r}")
+PY
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -212,8 +271,10 @@ import sys
 
 lines = [line.strip() for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
 expected = [
-    "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
     "az account show --query id --output tsv",
+    "az group exists --name rg-test",
+    "az group show --name rg-test --query name --output tsv",
+    "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
 ]
 if lines != expected:
     raise SystemExit(f"unexpected prompt command order: {lines!r}")
@@ -247,3 +308,63 @@ set -e
 grep -F 'still exists after 0s' <<<"$stuck_output" >/dev/null
 grep -F '/subscriptions/test/resourceGroups/rg-test/providers/Microsoft.ContainerInstance/containerGroups/cg-a' <<<"$stuck_output" >/dev/null
 grep -F '/subscriptions/test/resourceGroups/rg-test/providers/Microsoft.Network/publicIPAddresses/pip-a' <<<"$stuck_output" >/dev/null
+python3 - "$TMP/logs/commands.log" <<'PY'
+import sys
+
+lines = [line.strip() for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+expected = [
+    "az account show --query id --output tsv",
+    "az group exists --name rg-test",
+    "az group show --name rg-test --query name --output tsv",
+    "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
+    "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
+    "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
+    "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
+    "az standby-container-group-pool delete --resource-group rg-test --name standby-pool-a --yes",
+    "az group delete --name rg-test --yes --no-wait",
+    "az group exists --name rg-test",
+    "az resource list --resource-group rg-test --query [].id --output tsv",
+]
+if lines != expected:
+    raise SystemExit(f"unexpected stuck command order: {lines!r}")
+PY
+
+rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
+set +e
+poll_error_output="$(run_cleanup \
+  AZ_MODE=poll-error \
+  AZ_RESIDUAL_IDS=$'/subscriptions/test/resourceGroups/rg-test/providers/Microsoft.ContainerInstance/containerGroups/cg-a' \
+  "$ROOT/scripts/cleanup.sh" \
+  --resource-group rg-test \
+  --ondemand-namespace vn2-ondemand \
+  --standby-namespace vn2-standby \
+  --yes 2>&1)"
+poll_error_status=$?
+set -e
+
+[[ "$poll_error_status" -ne 0 ]]
+grep -F 'Azure CLI error while polling resource group rg-test' <<<"$poll_error_output" >/dev/null
+grep -F 'poll exists boom' <<<"$poll_error_output" >/dev/null
+grep -F '/subscriptions/test/resourceGroups/rg-test/providers/Microsoft.ContainerInstance/containerGroups/cg-a' <<<"$poll_error_output" >/dev/null
+python3 - "$TMP/logs/commands.log" <<'PY'
+import sys
+
+lines = [line.strip() for line in open(sys.argv[1], encoding="utf-8") if line.strip()]
+expected = [
+    "az account show --query id --output tsv",
+    "az group exists --name rg-test",
+    "az group show --name rg-test --query name --output tsv",
+    "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
+    "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
+    "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
+    "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
+    "az standby-container-group-pool delete --resource-group rg-test --name standby-pool-a --yes",
+    "az group delete --name rg-test --yes --no-wait",
+    "az group exists --name rg-test",
+    "az resource list --resource-group rg-test --query [].id --output tsv",
+]
+if lines != expected:
+    raise SystemExit(f"unexpected poll-error command order: {lines!r}")
+PY

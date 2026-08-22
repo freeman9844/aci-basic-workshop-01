@@ -5,8 +5,16 @@ import subprocess
 import sys
 import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
+
+VALID_SCENARIOS = (
+    "aks",
+    "vn2-ondemand",
+    "vn2-standby-uncached",
+    "vn2-standby-cached",
+)
 
 TERMINAL_FAILURE_REASONS = {
     "CrashLoopBackOff",
@@ -24,8 +32,120 @@ TERMINAL_FAILURE_REASONS = {
 }
 
 
+class CommandError(RuntimeError):
+    pass
+
+
+class JSONParseError(RuntimeError):
+    pass
+
+
 def utc_now_iso():
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _parse_yaml_scalar(value):
+    value = value.strip()
+    if not value:
+        return ""
+    if (value.startswith('"') and value.endswith('"')) or (
+        value.startswith("'") and value.endswith("'")
+    ):
+        return value[1:-1]
+    return value
+
+
+def _split_yaml_documents(text):
+    documents = []
+    current = []
+    for line in text.splitlines():
+        if line.strip() == "---":
+            if current:
+                documents.append("\n".join(current))
+                current = []
+            continue
+        current.append(line)
+    if current:
+        documents.append("\n".join(current))
+    return [document for document in documents if document.strip()]
+
+
+def _parse_yaml_mapping(text):
+    root = {}
+    stack = [(-1, root)]
+
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped in {"---", "..."}:
+            continue
+        if stripped.startswith("- "):
+            continue
+
+        if ":" not in stripped:
+            raise ValueError(f"Unsupported YAML line: {raw_line}")
+
+        indent = len(line) - len(line.lstrip(" "))
+        while len(stack) > 1 and indent <= stack[-1][0]:
+            stack.pop()
+
+        parent = stack[-1][1]
+        key, value = stripped.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+
+        if value:
+            parent[key] = _parse_yaml_scalar(value)
+            continue
+
+        nested = {}
+        parent[key] = nested
+        stack.append((indent, nested))
+
+    return root
+
+
+def _seed_expected_pod_records(manifest_path, expected_pods):
+    manifest_path = Path(manifest_path)
+    text = manifest_path.read_text(encoding="utf-8")
+    names = []
+
+    for index, document in enumerate(_split_yaml_documents(text), start=1):
+        parsed = _parse_yaml_mapping(document)
+        kind = parsed.get("kind")
+        if kind != "Pod":
+            raise ValueError(
+                f"Manifest {manifest_path} document {index} is not a Pod (found {kind!r})"
+            )
+
+        metadata = parsed.get("metadata")
+        if not isinstance(metadata, dict) or not metadata.get("name"):
+            raise ValueError(
+                f"Manifest {manifest_path} document {index} is missing metadata.name"
+            )
+
+        names.append(metadata["name"])
+
+    if len(names) != expected_pods:
+        raise ValueError(
+            f"Manifest {manifest_path} contains {len(names)} Pod documents but "
+            f"--expected-pods is {expected_pods}"
+        )
+
+    if len(names) != len(set(names)):
+        raise ValueError(f"Manifest {manifest_path} contains duplicate Pod names")
+
+    observations = OrderedDict()
+    for order, name in enumerate(names, start=1):
+        observations[name] = {
+            "name": name,
+            "manifest_order": order,
+            "created_observed_ms": None,
+            "scheduled_observed_ms": None,
+            "ready_observed_ms": None,
+            "failed_observed_ms": None,
+        }
+    return observations, names
 
 
 def condition_status(pod, condition_type):
@@ -145,7 +265,7 @@ def _pod_terminal_state(record, stop_reason):
         return "failed"
     if record.get("ready_observed_ms") is not None:
         return "ready"
-    if stop_reason in {"timeout", "failure"}:
+    if stop_reason in {"timeout", "failure", "apply_failure", "collection_failure"}:
         return "timeout"
     return "timeout"
 
@@ -172,15 +292,31 @@ def finalize_run(
     finished_at_monotonic_ns=None,
     poll_interval_seconds=None,
     apply_result=None,
+    apply_error=None,
+    collection_error=None,
     latest_pods_snapshot=None,
     events_text=None,
     poll_count=None,
+    pod_order=None,
 ):
     pods = []
     ready_vals = []
+    ordered_names = pod_order or list(observations.keys())
     all_ready = True
-    for name in sorted(observations):
-        record = dict(observations[name])
+
+    for name in ordered_names:
+        record = dict(
+            observations.get(
+                name,
+                {
+                    "name": name,
+                    "created_observed_ms": None,
+                    "scheduled_observed_ms": None,
+                    "ready_observed_ms": None,
+                    "failed_observed_ms": None,
+                },
+            )
+        )
         record.setdefault("name", name)
         record["terminal_state"] = _pod_terminal_state(record, stop_reason)
         if record.get("ready_observed_ms") is not None:
@@ -206,7 +342,15 @@ def finalize_run(
         "expected_pods": expected_pods,
     }
 
-    completion_reason = "all_ready" if all_ready and len(pods) == expected_pods else stop_reason
+    if apply_error is not None:
+        completion_reason = "apply_failure"
+    elif collection_error is not None:
+        completion_reason = "collection_failure"
+    elif all_ready and len(pods) == expected_pods:
+        completion_reason = "all_ready"
+    else:
+        completion_reason = stop_reason
+
     result = {
         "schema_version": 1,
         "scenario": scenario,
@@ -223,6 +367,8 @@ def finalize_run(
         "completion_reason": completion_reason,
         "poll_count": poll_count,
         "apply": apply_result,
+        "apply_error": apply_error,
+        "collection_error": collection_error,
         "pods": pods,
         "batch": batch,
         "latest_snapshot": {
@@ -236,7 +382,7 @@ def finalize_run(
 def _run_command(args, *, runner=subprocess.run):
     completed = runner(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if completed.returncode != 0:
-        raise RuntimeError(
+        raise CommandError(
             f"Command failed ({completed.returncode}): {' '.join(args)}\n{completed.stderr.strip()}"
         )
     return {
@@ -250,9 +396,9 @@ def _run_command(args, *, runner=subprocess.run):
 def _run_json_command(args, *, runner=subprocess.run):
     result = _run_command(args, runner=runner)
     try:
-        payload = json.loads(result["stdout"] or "{}")
+        payload = json.loads(result["stdout"])
     except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Failed to parse JSON from {' '.join(args)}: {exc}") from exc
+        raise JSONParseError(f"Failed to parse JSON from {' '.join(args)}: {exc}") from exc
     result["json"] = payload
     return result
 
@@ -309,48 +455,75 @@ def collect_run(
     manifest = Path(manifest)
     output = Path(output)
 
-    apply_result = _run_command(["kubectl", "apply", "-f", str(manifest)], runner=runner)
-
-    observations = {}
+    observations, pod_order = _seed_expected_pod_records(manifest, expected_pods)
     latest_snapshot = None
     poll_count = 0
-    stop_reason = None
+    stop_reason = "timeout"
     timeout_ms = float(timeout_seconds) * 1000.0
     interval_seconds = max(0.0, float(poll_interval_seconds))
+    apply_result = None
+    apply_error = None
+    collection_error = None
 
-    while True:
-        now_ns = monotonic_ns()
-        elapsed_ms = (now_ns - start_ns) / 1_000_000.0
-        latest = _run_json_command(
-            ["kubectl", "get", "pods", "-n", namespace, "-o", "json"], runner=runner
-        )
-        latest_snapshot = latest["json"]
-        observe_snapshot(observations, latest_snapshot, elapsed_ms)
-        poll_count += 1
+    try:
+        apply_result = _run_command(["kubectl", "apply", "-f", str(manifest)], runner=runner)
+    except CommandError as exc:
+        apply_error = {
+            "phase": "apply",
+            "message": str(exc),
+        }
+        stop_reason = "apply_failure"
+    else:
+        while True:
+            now_ns = monotonic_ns()
+            elapsed_ms = (now_ns - start_ns) / 1_000_000.0
+            try:
+                latest = _run_json_command(
+                    ["kubectl", "get", "pods", "-n", namespace, "-o", "json"], runner=runner
+                )
+            except CommandError as exc:
+                collection_error = {
+                    "phase": "get",
+                    "message": str(exc),
+                }
+                stop_reason = "collection_failure"
+                break
+            except JSONParseError as exc:
+                collection_error = {
+                    "phase": "json",
+                    "message": str(exc),
+                }
+                stop_reason = "collection_failure"
+                break
 
-        stop_reason = _should_stop(observations, expected_pods)
-        if stop_reason:
-            break
-        if elapsed_ms >= timeout_ms:
-            stop_reason = "timeout"
-            break
-        sleeper(interval_seconds)
+            latest_snapshot = latest["json"]
+            observe_snapshot(observations, latest_snapshot, elapsed_ms)
+            poll_count += 1
+
+            stop_reason = _should_stop(observations, expected_pods)
+            if stop_reason:
+                break
+            if elapsed_ms >= timeout_ms:
+                stop_reason = "timeout"
+                break
+            sleeper(interval_seconds)
 
     finished_utc = utc_now()
     finished_ns = monotonic_ns()
     events_error = None
+    events_text = ""
     try:
         events_text = _fetch_events(namespace, runner=runner)
     except Exception as exc:
-        events_text = ""
         events_error = str(exc)
+
     result = finalize_run(
         scenario=scenario,
         run_number=run_number,
         expected_pods=expected_pods,
         observations=observations,
         timeout_ms=timeout_ms,
-        stop_reason=stop_reason or "timeout",
+        stop_reason=stop_reason,
         namespace=namespace,
         manifest=manifest,
         started_at_utc=start_utc,
@@ -359,19 +532,23 @@ def collect_run(
         finished_at_monotonic_ns=finished_ns,
         poll_interval_seconds=poll_interval_seconds,
         apply_result=apply_result,
+        apply_error=apply_error,
+        collection_error=collection_error,
         latest_pods_snapshot=latest_snapshot,
         events_text=events_text,
         poll_count=poll_count,
+        pod_order=pod_order,
     )
     if events_error is not None:
         result["events_error"] = events_error
+
     _write_json_atomic(output, result)
     return 0 if stop_reason == "all_ready" else 2
 
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Collect Pod startup latency evidence")
-    parser.add_argument("--scenario", required=True)
+    parser.add_argument("--scenario", required=True, choices=VALID_SCENARIOS)
     parser.add_argument("--run", required=True, type=int)
     parser.add_argument("--namespace", required=True)
     parser.add_argument("--manifest", required=True)

@@ -95,13 +95,24 @@ Module 01에서 provider 등록, quota, VM SKU, Helm/Kubernetes 도구 버전을
 - [ ] 실패, timeout, fallback evidence를 삭제하지 않고 그대로 보관했다.
 - [ ] Module 07까지 완료해 잔여 리소스가 없는지 확인했다.
 
+## Operator-only smoke test checklist
+
+- [ ] Fresh Cloud Shell Bash session에서 이 저장소만 열고 시작했다.
+- [ ] Modules 01-07을 순서대로 끝냈고 중간에 shell/session을 바꾸지 않았다.
+- [ ] `kubectl get nodes -L benchmark-path` 에서 two VN2 virtual nodes show Ready concurrently 상태를 확인했다.
+- [ ] `./scripts/check-standby-pool.sh -g "$RG" -n "$STANDBY_POOL" --expect-running 5 --timeout-seconds 1200 --interval-seconds 15` 로 Standby Pool running count is 5 임을 확인했다.
+- [ ] `find results/raw -maxdepth 1 -type f -name '*.json' | wc -l` 결과가 exactly 12 raw JSON files 이다.
+- [ ] `results/summary.json, results/summary.csv, and results/summary.md` 가 모두 생성되었다.
+- [ ] No timeout/failure samples are hidden; `failed_count`, `timeout_count`, `non_ready_pods` 를 그대로 검토했다.
+- [ ] `./scripts/cleanup.sh --resource-group "$RG" --yes` 뒤 `az group exists --name "$RG"` 결과가 `false` 다.
+
 ## Mandatory cleanup
 
-실습이 끝나면 반드시 Module 07의 cleanup 절차를 실행하세요.
+실습이 끝나면 반드시 [Module 07](docs/07-limitations-troubleshooting-cleanup.md)의 cleanup 절차를 실행하세요.
 
 ```bash
-./scripts/cleanup.sh --resource-group "$WORKSHOP_RG" --yes
-az group exists --name "$WORKSHOP_RG"
+./scripts/cleanup.sh --resource-group "$RG" --yes
+az group exists --name "$RG"
 ```
 
 `az group exists` 결과가 `false`가 될 때까지 확인해야 합니다. StandbyPool warm capacity와 ACI 리소스는 삭제 전까지 계속 비용을 발생시킵니다.

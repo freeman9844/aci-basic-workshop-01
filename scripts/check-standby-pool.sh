@@ -100,7 +100,7 @@ def lower_keys(value):
     return value
 
 
-def load_status():
+def load_status(timeout_seconds=None):
     completed = subprocess.run(
         [
             "az",
@@ -117,6 +117,7 @@ def load_status():
         ],
         capture_output=True,
         text=True,
+        timeout=timeout_seconds,
     )
     if completed.returncode != 0:
         message = completed.stderr.strip() or completed.stdout.strip() or "az standby-container-group-pool status failed"
@@ -160,8 +161,16 @@ def emit_and_exit(code, payload):
 
 
 deadline = time.monotonic() + timeout_seconds
+latest_normalized = None
 while True:
-    normalized = normalize(load_status())
+    remaining_before_probe = deadline - time.monotonic()
+    if remaining_before_probe <= 0:
+        emit_and_exit(3, latest_normalized or normalize({}))
+    try:
+        normalized = normalize(load_status(timeout_seconds=remaining_before_probe))
+    except subprocess.TimeoutExpired:
+        emit_and_exit(3, latest_normalized or normalize({}))
+    latest_normalized = normalized
     if normalized["health"] == "degraded":
         emit_and_exit(2, normalized)
     if (
@@ -170,8 +179,10 @@ while True:
         and normalized["running"] == expect_running
     ):
         emit_and_exit(0, normalized)
-    if time.monotonic() >= deadline:
-        emit_and_exit(3, normalized)
-    if interval_seconds > 0:
-        time.sleep(interval_seconds)
+    remaining_after_probe = deadline - time.monotonic()
+    if remaining_after_probe <= 0:
+        emit_and_exit(3, latest_normalized)
+    sleep_seconds = min(interval_seconds, remaining_after_probe)
+    if sleep_seconds > 0:
+        time.sleep(sleep_seconds)
 PY

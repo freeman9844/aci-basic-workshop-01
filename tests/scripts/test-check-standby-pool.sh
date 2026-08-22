@@ -78,17 +78,39 @@ cat >"$TMP/standby-pending.json" <<'EOF'
 }
 EOF
 make_fake_az "$TMP/standby-pending.json"
+start_ns="$(python3 - <<'PY'
+import time
+print(time.monotonic_ns())
+PY
+)"
 set +e
 output="$(PATH="$TMP:$PATH" "$ROOT/scripts/check-standby-pool.sh" \
   -g rg-test \
   -n pool-test \
   --expect-running 5 \
-  --timeout-seconds 0 \
-  --interval-seconds 0)"
+  --timeout-seconds 0.4 \
+  --interval-seconds 5)"
 status=$?
 set -e
+end_ns="$(python3 - <<'PY'
+import time
+print(time.monotonic_ns())
+PY
+)"
+elapsed_ms="$(python3 - "$start_ns" "$end_ns" <<'PY'
+import sys
+start_ns = int(sys.argv[1])
+end_ns = int(sys.argv[2])
+print((end_ns - start_ns) / 1_000_000)
+PY
+)"
 
 [[ "$status" -eq 3 ]]
+python3 - "$elapsed_ms" <<'PY'
+import sys
+elapsed_ms = float(sys.argv[1])
+if elapsed_ms > 1200:
+    raise SystemExit(f"elapsed too long: {elapsed_ms:.3f}ms")
+PY
 grep -F '"health":"healthy"' <<<"$output"
 grep -F '"running":4' <<<"$output"
-

@@ -59,9 +59,12 @@ Task 5: fix round 1/5 (1 addressed, 0 open — restricted VM SKU entries now fai
 Task 5: complete (commits 320e6d3..78a16b1, review clean with controller ruling)
 Task 6: fix round 1/5 (3 addressed, 0 open — Azure subscription/RG scope validated before deletion; group existence is tri-state; polling errors report residual IDs; commits 7e028dc..ef6435c)
 Task 6: complete (commits 78a16b1..ef6435c, review clean)
-Task 7: minor (deferred): Module 03 objective says two labels separate four paths, but the topology has three node paths and four scenarios; Task 9 should clarify this wording.
+Task 7: minor (resolved by Task 9): Module 03 now distinguishes three node paths from four scenarios and explains the two standby cache states.
 Task 7: complete (commits ef6435c..4b6251a, review clean)
 
 Task 8: fix round 1/5 (1 blocker and 1 coupled spec violation addressed — Kubernetes 1.34 patch discovery now reads `patchVersions` with numeric sorting; service CIDR moved outside the VNet; commits 91d8787..d6c25a5)
 Task 8: complete (commits 4b6251a..d6c25a5, review clean)
-Task 9: complete (docs/03 now documents pinned concurrent `vn2-ondemand` + `vn2-standby` installs, single webhook owner inspection, `STANDBY_POOL` export, focused doc test + full suite green)
+Task 9: fix round 1/5 (1 blocker addressed — webhook inspection now uses the chart's MutatingWebhookConfiguration; node registration is bounded before Ready waits; commits f6564dd..0ee5740)
+Task 9: complete (commits d6c25a5..0ee5740, review clean)
+Task 10: RED observed — new `tests/docs/test-benchmark-modules.sh` failed because Module 04 lacked the required benchmark execution sections and exact scenario coverage.
+Task 10: complete (focused doc test + all current tests + `git diff --check` green; docs/04-05 now pin the four 3-run invocations, jq raw/diagnostic inspection, image-cache request proof, and deterministic pool recycle before cached standby)

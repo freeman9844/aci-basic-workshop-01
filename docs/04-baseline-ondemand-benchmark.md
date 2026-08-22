@@ -17,39 +17,96 @@
 
 ## 진행 순서
 
-1. 현재 shell 세션의 연속성을 확인하고 `results/` 디렉터리를 준비합니다.
-2. `aks` 시나리오를 `--runs 3` 으로 실행합니다.
+1. 현재 shell 세션의 연속성을 확인하고, interactive-safe helper를 준비합니다.
+2. `aks` 시나리오를 `--runs 3` 으로 실행하고 exit code를 즉시 기록합니다.
 3. `aks` raw 파일과 diagnostics 경로를 확인하고 `jq` 로 per-Pod / batch timing을 빠르게 읽습니다.
-4. `vn2-ondemand` 시나리오를 `--runs 3` 으로 실행합니다.
+4. `vn2-ondemand` 시나리오를 `--runs 3` 으로 실행하고 exit code를 즉시 기록합니다.
 5. `vn2-ondemand` raw 파일과 diagnostics 경로를 확인하고 같은 `jq` 질의를 다시 사용합니다.
-6. 첫 run의 node image cache 특성과 run별 JSON을 그대로 유지해야 하는 이유를 확인합니다.
+6. retry 전에 고정 결과 경로를 archive 하는 절차와 첫 run의 node image cache 해석 원칙을 확인합니다.
 
-### 1) shell 연속성과 결과 디렉터리 준비
+### 1) shell 연속성 확인과 helper 준비
 
 ```bash
 cd ~/aci-vn2-performance-workshop
 
-set -euo pipefail
+require_workshop_vars() {
+  if [[ -z "${RG:-}" ]]; then
+    printf 'RG is not set. Keep this Cloud Shell open and recover it from Module 02 before continuing.\n' >&2
+    return 1
+  fi
+  if [[ -z "${STANDBY_POOL:-}" ]]; then
+    printf 'STANDBY_POOL is not set. Keep this Cloud Shell open and recover it from Module 03 before continuing.\n' >&2
+    return 1
+  fi
+  printf 'RG=%s\nSTANDBY_POOL=%s\n' "$RG" "$STANDBY_POOL"
+}
 
-: "${RG:?Keep the Module 02 shell session so later diagnostics still point at the same resource group.}"
-: "${STANDBY_POOL:?Keep the Module 03 shell session so Module 05 can reuse the same standby pool.}"
+run_and_capture_rc() {
+  local label="$1"
+  shift
+  "$@"
+  local rc=$?
+  printf '%s exit code: %s\n' "$label" "$rc"
+  return "$rc"
+}
+
+archive_failed_attempts() {
+  local scenario="$1"
+  local timestamp archive_dir
+  timestamp="$(date +%Y%m%d-%H%M%S)"
+  archive_dir="results/failed-attempts/${scenario}-${timestamp}"
+  mkdir -p "$archive_dir/raw" "$archive_dir/diagnostics"
+
+  mapfile -t raw_matches < <(find results/raw -maxdepth 1 -type f -name "${scenario}-run-*.json" | sort)
+  mapfile -t diag_matches < <(find results/diagnostics -maxdepth 1 -mindepth 1 -type d -name "${scenario}-run-*" | sort)
+
+  if [[ "${#raw_matches[@]}" -eq 0 && "${#diag_matches[@]}" -eq 0 ]]; then
+    printf 'No prior artifacts found for %s; nothing to archive.\n' "$scenario"
+    return 0
+  fi
+
+  if [[ "${#raw_matches[@]}" -gt 0 ]]; then
+    mv "${raw_matches[@]}" "$archive_dir/raw/"
+  fi
+  if [[ "${#diag_matches[@]}" -gt 0 ]]; then
+    mv "${diag_matches[@]}" "$archive_dir/diagnostics/"
+  fi
+
+  printf 'Archived prior %s artifacts to %s\n' "$scenario" "$archive_dir"
+}
 
 mkdir -p results
-printf 'RG=%s\nSTANDBY_POOL=%s\n' "$RG" "$STANDBY_POOL"
+require_workshop_vars
 ```
 
-이 모듈의 두 benchmark command는 standby 옵션을 쓰지 않지만, 같은 shell 세션을 유지해야 이후 Module 05에서 `$RG` 와 `$STANDBY_POOL` 을 그대로 재사용할 수 있습니다.
+여기서는 persistent errexit 설정을 켜지 않습니다. `$RG` 또는 `$STANDBY_POOL` 이 비어 있어도 Cloud Shell 자체가 닫히지 않게 해야 나중에 같은 세션에서 복구 절차를 계속할 수 있습니다.
 
 ### 2) regular AKS 기준선 3회 실행
 
 ```bash
-./scripts/run-benchmark.sh \
-  --scenario aks \
-  --runs 3 \
-  --output-dir results
+run_and_capture_rc "aks benchmark" \
+  ./scripts/run-benchmark.sh \
+    --scenario aks \
+    --runs 3 \
+    --output-dir results
+AKS_RC=$?
+
+case "$AKS_RC" in
+  0)
+    printf 'aks benchmark completed all 3 runs.\n'
+    ;;
+  2)
+    printf 'RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.\n' >&2
+    printf 'The runner stops remaining runs after the first failed sample.\n' >&2
+    printf 'Keep this Cloud Shell session open, inspect results/raw and results/diagnostics, archive the fixed paths below, and then rerun the standard command.\n' >&2
+    ;;
+  *)
+    printf 'Unexpected aks benchmark failure RC=%s\n' "$AKS_RC" >&2
+    ;;
+esac
 ```
 
-이 명령은 `benchmark-path=aks` 라벨이 붙은 일반 AKS VM 노드에서 5개 Pod × 3회를 실행합니다. `run-benchmark.sh` 는 각 run마다 새 namespace를 만들고 raw JSON, diagnostics, namespace cleanup 여부를 자동으로 남깁니다.
+이 명령은 `benchmark-path=aks` 라벨이 붙은 일반 AKS VM 노드에서 5개 Pod × 3회를 실행합니다. `run-benchmark.sh` 의 exit code `2` 는 evidence/recovery 상태입니다. 실패를 성공처럼 취급하지 말고, raw JSON과 diagnostics를 본 뒤 다시 판단합니다.
 
 ### 3) `aks` raw evidence와 diagnostics 확인
 
@@ -88,10 +145,26 @@ results/diagnostics/aks-run-1/kubectl-nodes.json
 ### 4) `VN2 OnDemand` 3회 실행
 
 ```bash
-./scripts/run-benchmark.sh \
-  --scenario vn2-ondemand \
-  --runs 3 \
-  --output-dir results
+run_and_capture_rc "vn2-ondemand benchmark" \
+  ./scripts/run-benchmark.sh \
+    --scenario vn2-ondemand \
+    --runs 3 \
+    --output-dir results
+ONDEMAND_RC=$?
+
+case "$ONDEMAND_RC" in
+  0)
+    printf 'vn2-ondemand benchmark completed all 3 runs.\n'
+    ;;
+  2)
+    printf 'RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.\n' >&2
+    printf 'The runner stops remaining runs after the first failed sample.\n' >&2
+    printf 'Keep this Cloud Shell session open, inspect the evidence, archive the fixed paths below, and then rerun the standard command.\n' >&2
+    ;;
+  *)
+    printf 'Unexpected vn2-ondemand benchmark failure RC=%s\n' "$ONDEMAND_RC" >&2
+    ;;
+esac
 ```
 
 이 경로는 standby ready capacity 없이 ACI를 net-new 로 준비하는 흐름을 포함합니다. 따라서 admission controller, ACI provisioning, image pull이 모두 측정값에 반영됩니다.
@@ -107,7 +180,25 @@ find results/diagnostics -maxdepth 2 -type f -path '*/vn2-ondemand-run-*/*' | so
 
 여기서도 raw JSON 하나가 run 하나에 대응합니다. `results/diagnostics/vn2-ondemand-run-1/` 아래에는 `kubectl-describe-pods.txt`, `kubectl-events.txt`, `kubectl-nodes.json`, `az-container-list.json` 이 생성되어 실패 원인과 namespace 정리 상태를 나중에 다시 확인할 수 있습니다.
 
-### 6) 첫 run의 node image cache와 run별 JSON 유지 원칙
+### 6) retry 전 archive와 첫 run의 node image cache 해석
+
+같은 시나리오를 다시 실행하면 `results/raw/<scenario>-run-*` 와 `results/diagnostics/<scenario>-run-*` 고정 경로가 덮어써집니다. 따라서 retry 전에 반드시 기존 evidence를 archive 해야 합니다.
+
+```bash
+archive_failed_attempts aks
+
+./scripts/run-benchmark.sh \
+  --scenario aks \
+  --runs 3 \
+  --output-dir results
+
+archive_failed_attempts vn2-ondemand
+
+./scripts/run-benchmark.sh \
+  --scenario vn2-ondemand \
+  --runs 3 \
+  --output-dir results
+```
 
 regular AKS 노드는 첫 run 에서만 이미지가 cold 상태일 수 있고, 두 번째 이후 run은 같은 VM의 node image cache 덕분에 더 빨라질 수 있습니다. 이 워크숍은 그 차이를 평균값으로 덮지 않기 위해 run별 JSON 을 그대로 보관합니다.
 
@@ -115,11 +206,12 @@ regular AKS 노드는 첫 run 에서만 이미지가 cold 상태일 수 있고, 
 
 ## 완료 체크포인트
 
-- `./scripts/run-benchmark.sh --scenario aks --runs 3 --output-dir results` 가 성공했다.
-- `./scripts/run-benchmark.sh --scenario vn2-ondemand --runs 3 --output-dir results` 가 성공했다.
-- `find results/raw -maxdepth 1 -type f -name 'aks-run-*.json' | sort` 와 `find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort` 에서 6개 raw 파일이 보인다.
+- `./scripts/run-benchmark.sh --scenario aks --runs 3 --output-dir results` 와 `./scripts/run-benchmark.sh --scenario vn2-ondemand --runs 3 --output-dir results` 의 exit code를 각각 기록했다.
+- 두 시나리오 명령이 모두 0으로 끝났을 때만 정확히 6개의 raw 파일을 기대합니다.
+- `find results/raw -maxdepth 1 -type f -name 'aks-run-*.json' | sort` 와 `find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort` 로 생성된 raw 파일 수를 확인했다.
 - `jq -r '.pods[] | [.name, .terminal_state, .create_to_ready_ms, .node_name] | @tsv' ...` 와 `jq '{scenario, run, batch: {first_ready_ms: .batch.first_ready_ms, all_ready_ms: .batch.all_ready_ms}}' ...` 로 per-Pod / batch timing을 확인했다.
 - `results/diagnostics/aks-run-1/` 와 `results/diagnostics/vn2-ondemand-run-1/` 아래의 `kubectl-describe-pods.txt`, `kubectl-events.txt`, `kubectl-nodes.json`, `az-container-list.json` 경로를 확인했다.
+- retry 전에 `results/failed-attempts/` 로 기존 evidence를 archive 하는 절차를 준비했다.
 - 첫 run의 node image cache 차이 때문에 run별 JSON을 그대로 유지해야 한다는 점을 이해했다.
 - 다음 모듈에서 같은 `$RG` 와 `$STANDBY_POOL` 을 그대로 재사용할 준비가 되었다.
 
@@ -127,8 +219,8 @@ regular AKS 노드는 첫 run 에서만 이미지가 cold 상태일 수 있고, 
 
 | 증상 | 원인 후보 | 확인 명령 | 조치 |
 | --- | --- | --- | --- |
-| `aks` run이 timeout 으로 끝난다 | 일반 AKS 노드에 image pull 지연 또는 다른 워크로드 간섭이 있음 | `jq '{scenario, run, batch, pods: [.pods[] | {name, terminal_state, create_to_ready_ms, node_name}]}' results/raw/aks-run-1.json`, `sed -n '1,160p' results/diagnostics/aks-run-1/kubectl-events.txt`, `sed -n '1,160p' results/diagnostics/aks-run-1/kubectl-describe-pods.txt` | raw JSON과 diagnostics를 보존한 채 원인을 기록하고, node pressure 여부를 확인한 뒤 같은 시나리오를 다시 실행 |
-| `vn2-ondemand` run이 `aks` 보다 훨씬 느리다 | 정상적인 net-new ACI provisioning, image pull, admission path가 모두 포함됨 | `jq '{scenario, run, batch}' results/raw/vn2-ondemand-run-1.json`, `sed -n '1,160p' results/diagnostics/vn2-ondemand-run-1/kubectl-events.txt` | 실패가 아니라면 정상 비교값으로 유지하고, Module 06에서 standby 시나리오와 함께 해석 |
+| `aks` 또는 `vn2-ondemand` 가 `RC=2` 로 끝난다 | benchmark sample timeout/failure가 raw JSON 기록 뒤에 발생함 | `jq '{scenario, run, batch, pods: [.pods[] | {name, terminal_state, create_to_ready_ms, node_name}]}' results/raw/aks-run-1.json`, `sed -n '1,160p' results/diagnostics/aks-run-1/kubectl-events.txt`, `sed -n '1,160p' results/diagnostics/vn2-ondemand-run-1/kubectl-describe-pods.txt` | shell을 닫지 말고 evidence를 본다. runner가 남은 run을 중단했으므로 먼저 `archive_failed_attempts <scenario>` 를 실행한 뒤 같은 표준 명령을 다시 실행 |
+| raw 파일 수가 6개보다 적다 | 어느 시나리오에서든 첫 failed sample 이후 남은 run이 중단됨 | `find results/raw -maxdepth 1 -type f -name 'aks-run-*.json' | sort`, `find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort` | 비정상이 아니다. raw/diagnostics를 보존하고, retry 전에 archive 한 뒤 필요한 시나리오만 다시 실행 |
 | diagnostics 파일이 비어 보인다 | namespace가 빠르게 정리되었거나 `az-container-list.json` 이 skip record일 수 있음 | `find results/diagnostics -maxdepth 2 -type f -path '*/aks-run-*/*' | sort`, `cat results/diagnostics/aks-run-1/az-container-list.json`, `cat results/diagnostics/vn2-ondemand-run-1/az-container-list.json` | 파일이 존재하면 우선 evidence는 확보된 것임. 삭제하지 말고 다음 모듈로 진행 |
 
 ## 이전/다음

@@ -14,3 +14,9 @@ Task 9: fix round 1
 - RED: bash tests/docs/test-install-dual-vn2.sh -> docs/03-install-dual-vn2.md is missing required text: kubectl get mutatingwebhookconfiguration virtual-node-admission-controller \
 - GREEN: bash tests/docs/test-install-dual-vn2.sh
 - FULL SUITE: python3 -m unittest discover -s tests -p 'test_*.py' -v && bash tests/scripts/test-check-standby-pool.sh && bash tests/scripts/test-run-benchmark.sh && bash tests/scripts/test-preflight.sh && bash tests/scripts/test-cleanup.sh && bash tests/docs/test-overview.sh && bash tests/docs/test-prerequisites-foundation.sh && bash tests/docs/test-install-dual-vn2.sh && git diff --check
+
+Task 10: fix round 1
+- RED: bash tests/docs/test-benchmark-modules.sh -> docs/04-baseline-ondemand-benchmark.md is missing required text: require_workshop_vars() {
+- GREEN: bash tests/docs/test-benchmark-modules.sh
+- FULL SUITE: python3 -m unittest discover -s tests -p 'test_*.py' -v && bash tests/scripts/test-check-standby-pool.sh && bash tests/scripts/test-run-benchmark.sh && bash tests/scripts/test-preflight.sh && bash tests/scripts/test-cleanup.sh && bash tests/docs/test-overview.sh && bash tests/docs/test-prerequisites-foundation.sh && bash tests/docs/test-install-dual-vn2.sh && bash tests/docs/test-benchmark-modules.sh
+- DIFF CHECK: git diff --check

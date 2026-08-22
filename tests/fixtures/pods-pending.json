@@ -1,0 +1,42 @@
+{
+  "kind": "List",
+  "apiVersion": "v1",
+  "items": [
+    {
+      "metadata": {
+        "name": "bench-1",
+        "creationTimestamp": "2026-08-23T00:00:00Z"
+      },
+      "spec": {
+        "nodeName": "virtual-node-vn2-standby"
+      },
+      "status": {
+        "phase": "Pending",
+        "conditions": [
+          {
+            "type": "PodScheduled",
+            "status": "True",
+            "lastTransitionTime": "2026-08-23T00:00:00Z"
+          },
+          {
+            "type": "ContainersReady",
+            "status": "False",
+            "lastTransitionTime": "2026-08-23T00:00:00Z"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "name": "bench",
+            "ready": false,
+            "state": {
+              "waiting": {
+                "reason": "ContainerCreating",
+                "message": "Pulling image"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

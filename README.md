@@ -1,0 +1,107 @@
+# ACI VN2 성능 워크숍 개요
+
+이 저장소는 **Korea Central** 기준으로 일반 AKS 노드, **VN2 OnDemand**, **StandbyPool**, **Image Cache** 조합을 같은 조건으로 측정하는 150분 실습 안내서입니다. 목표는 참가자가 `5개 Pod × 3회` 반복 측정을 통해 Pod 시작 지연과 batch 완료 시간을 직접 수집하고 해석하도록 돕는 것입니다.
+
+> [!WARNING]
+> 이 워크숍은 **전용 교육용 Azure 구독의 Owner 권한**을 전제로 합니다. 기존 production 구독이나 공유 AKS 클러스터에서 진행하지 마세요.
+
+> [!WARNING]
+> **비용**이 즉시 발생합니다. 실습 중에는 AKS VM, `cg` subnet에 연결한 **NAT Gateway** 와 **public IP**, **ACI OnDemand** container group 생성, 그리고 StandbyPool의 **5개의 warm standby** container groups가 함께 유지됩니다. Module 07의 정리 절차를 생략하면 실습 종료 후에도 과금이 계속됩니다.
+
+## 빠른 시작
+
+```bash
+git clone <repository-url> ~/aci-vn2-performance-workshop
+cd ~/aci-vn2-performance-workshop
+```
+
+실습은 Azure Portal Cloud Shell Bash를 기준으로 작성되었습니다. 로컬 터미널을 사용할 경우 `az`, `kubectl`, `helm`, `jq`, `python3`, `git` 버전이 Module 01 기준을 만족해야 합니다.
+
+## 아키텍처
+
+```mermaid
+flowchart TB
+  user[Participant<br>Azure Cloud Shell Bash] --> scripts[Workshop scripts<br>preflight, benchmark, summarize, cleanup]
+  scripts --> api[AKS API server]
+
+  subgraph aks[Single AKS cluster]
+    vm[AKS VM node<br>Scenario A]
+    ondemand[VN2 Helm release: ondemand<br>node label: benchmark-path=ondemand]
+    standby[VN2 Helm release: standby<br>node label: benchmark-path=standby]
+  end
+
+  api --> vm
+  api --> ondemand
+  api --> standby
+
+  ondemand --> aci1[ACI net-new container groups<br>Scenario B]
+  standby --> pool[ACI Standby Pool<br>maxReadyCapacity=5]
+  pool --> aci2[Warm UVM, uncached image<br>Scenario C]
+  pool --> aci3[Warm UVM, cached image<br>Scenario D]
+
+  scripts --> raw[results/raw<br>JSON, CSV, Pod events]
+  raw --> report[results/summary.md<br>median, p95, min/max, speed-up]
+```
+
+## 비교 시나리오
+
+| ID | 시나리오 | 실행 위치 | 측정 목적 |
+| --- | --- | --- | --- |
+| `aks` | 일반 AKS 노드 | 이미 준비된 일반 AKS 노드 | 프로비저닝된 VM 기준선 확보 |
+| `vn2-ondemand` | VN2 OnDemand | 새 ACI container group 생성 경로 | net-new provisioning + image pull 포함 시간 확인 |
+| `vn2-standby-uncached` | StandbyPool uncached | warm UVM, 이미지 캐시 없음 | standby capacity 자체 효과 분리 |
+| `vn2-standby-cached` | StandbyPool cached | warm UVM + benchmark image cache | warm standby + cache 조합의 최고 성능 비교 |
+
+## 사전 요구 사항
+
+- Azure Portal Cloud Shell Bash 또는 동등한 Bash 환경
+- 전용 교육용 구독과 **Owner** 권한
+- 대상 지역: **Korea Central**
+- 워크숍용 리소스를 새로 만들 수 있는 quota 여유
+- `results/` 디렉터리에 raw evidence를 보관할 수 있는 저장소 쓰기 권한
+
+Module 01에서 provider 등록, quota, VM SKU, Helm/Kubernetes 도구 버전을 다시 확인합니다.
+
+## 모듈 구성
+
+| Module | 주제 | 시간 | 결과 |
+| --- | --- | ---: | --- |
+| Module 00 | 개요와 측정 계약 | 5분 | 비교 기준, 지표, 비용, cleanup 원칙 이해 |
+| Module 01 | 사전 검사와 참가 조건 확인 | 15분 | 도구, 권한, provider, feature, quota 확인 |
+| Module 02 | Azure 기반 환경 준비 | 30분 | RG, VNet, delegated subnet, NAT Gateway, AKS 준비 |
+| Module 03 | 이중 VN2 설치 | 20분 | OnDemand/Standby release와 node label 준비 |
+| Module 04 | 기준선과 OnDemand 측정 | 25분 | `aks`, `vn2-ondemand` raw evidence 생성 |
+| Module 05 | StandbyPool과 Image Cache 측정 | 25분 | `vn2-standby-uncached`, `vn2-standby-cached` raw evidence 생성 |
+| Module 06 | 결과 분석 | 20분 | summary JSON/CSV/Markdown 생성 및 해석 |
+| Module 07 | 제약, 트러블슈팅, 정리 | 10분 | 오류 분류, 잔여 리소스 확인, 전체 cleanup |
+
+## 문서 흐름
+
+1. [Module 01](docs/01-prerequisites.md) — 사전 검사와 참가 조건 확인
+2. [Module 02](docs/02-azure-foundation.md) — Azure 기반 환경 준비
+3. [Module 03](docs/03-install-dual-vn2.md) — 이중 VN2 설치
+4. [Module 04](docs/04-baseline-ondemand-benchmark.md) — 기준선과 OnDemand 측정
+5. [Module 05](docs/05-standby-cache-benchmark.md) — StandbyPool과 Image Cache 측정
+6. [Module 06](docs/06-analyze-results.md) — 결과 분석
+7. [Module 07](docs/07-limitations-troubleshooting-cleanup.md) — 제약, 트러블슈팅, 정리
+
+## 완료 체크리스트
+
+- [ ] Module 01에서 Owner 권한, provider 등록, 도구 버전, quota를 확인했다.
+- [ ] Module 02에서 AKS와 `cg` subnet, NAT Gateway, public IP를 준비했다.
+- [ ] Module 03에서 `benchmark-path=aks|ondemand|standby` 경로를 모두 준비했다.
+- [ ] Module 04와 Module 05에서 네 시나리오의 raw JSON evidence를 모두 만들었다.
+- [ ] Module 06에서 `results/summary.json`, `results/summary.csv`, `results/summary.md`를 생성했다.
+- [ ] 실패, timeout, fallback evidence를 삭제하지 않고 그대로 보관했다.
+- [ ] Module 07까지 완료해 잔여 리소스가 없는지 확인했다.
+
+## Mandatory cleanup
+
+실습이 끝나면 반드시 Module 07의 cleanup 절차를 실행하세요.
+
+```bash
+./scripts/cleanup.sh --resource-group "$WORKSHOP_RG" --yes
+az group exists --name "$WORKSHOP_RG"
+```
+
+`az group exists` 결과가 `false`가 될 때까지 확인해야 합니다. StandbyPool warm capacity와 ACI 리소스는 삭제 전까지 계속 비용을 발생시킵니다.

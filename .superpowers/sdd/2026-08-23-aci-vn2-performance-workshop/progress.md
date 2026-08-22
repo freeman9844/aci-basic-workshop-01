@@ -59,5 +59,8 @@ Task 5: fix round 1/5 (1 addressed, 0 open — restricted VM SKU entries now fai
 Task 5: complete (commits 320e6d3..78a16b1, review clean with controller ruling)
 Task 6: fix round 1/5 (3 addressed, 0 open — Azure subscription/RG scope validated before deletion; group existence is tri-state; polling errors report residual IDs; commits 7e028dc..ef6435c)
 Task 6: complete (commits 78a16b1..ef6435c, review clean)
+Task 7: minor (deferred): Module 03 objective says two labels separate four paths, but the topology has three node paths and four scenarios; Task 9 should clarify this wording.
+Task 7: complete (commits ef6435c..4b6251a, review clean)
 
 Task 7: complete (workshop overview README, module shells, docs navigation contract, focused docs test + full suite green)
+Task 8: complete (docs/01-02 now cover provider registration, historical feature/GA flow, Standby Pool Resource Provider RBAC, Azure foundation AKS/NAT/kubelet grants, focused doc test + full suite green)

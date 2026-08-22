@@ -2,7 +2,7 @@
 
 ## 목표
 
-참가자가 워크숍 시작 전에 전용 교육용 구독, Owner 권한, 필수 도구 버전, provider 및 feature 등록, Korea Central quota 상태를 한 번에 점검하도록 합니다.
+참가자가 워크숍 시작 전에 전용 교육용 구독, Owner 권한, 필수 도구, provider 등록 상태, 과거 preview feature/현재 GA 게이트, 그리고 Standby Pool Resource Provider용 구독 RBAC를 한 번에 검증하도록 합니다.
 
 ## 예상 소요 시간
 
@@ -13,14 +13,116 @@
 - Azure Portal Cloud Shell Bash에 로그인되어 있다.
 - 워크숍 저장소가 `~/aci-vn2-performance-workshop` 또는 동등한 경로에 clone 되어 있다.
 - 아직 workshop 리소스 그룹이나 AKS 클러스터를 만들지 않았다.
+- 이 모듈은 워크숍 시작 전에 한 번, 실습 시작 직전에 한 번 다시 확인한다.
 
 ## 진행 순서
 
-1. 현재 Azure 구독이 실습용 전용 구독인지 확인합니다.
-2. `az`, `kubectl`, `helm`, `jq`, `python3`, `git` 사용 가능 여부를 점검합니다.
-3. `Microsoft.ContainerInstance`, `Microsoft.StandbyPool`, preview feature 또는 GA 전환 상태를 확인합니다.
-4. Korea Central의 AKS VM SKU와 ACI quota가 실습 요구사항을 만족하는지 검증합니다.
-5. `results/environment.json`을 생성해 이후 모듈에서 같은 기준값을 재사용합니다.
+1. 현재 Azure 구독이 실습용 전용 구독인지 확인하고 provider를 미리 등록합니다.
+2. 과거 `StandbyContainerGroupPoolPreview` feature가 필요한 구독과 현재 GA 상태를 모두 안전하게 처리합니다.
+3. `Standby Pool Resource Provider` 서비스 주체에 구독 범위 역할 세 개를 부여합니다.
+4. `scripts/preflight.sh` 로 도구 버전, Owner 권한, provider 등록, quota, VM SKU를 fail-fast 검증합니다.
+5. `results/environment.json` 을 확인하고 다음 모듈에서 그대로 재사용합니다.
+
+### 1) 워크숍 하루 전: provider 등록과 feature/GA 상태 확인
+
+아래 블록은 Cloud Shell Bash에서 그대로 실행할 수 있습니다. `set -euo pipefail` 를 사용하고, `ResourceNotFound` 가 나오면 preview feature가 GA로 전환된 상태로 해석합니다.
+
+```bash
+cd ~/aci-vn2-performance-workshop
+mkdir -p results
+
+set -euo pipefail
+
+az account show --output table
+az provider register --namespace Microsoft.ContainerInstance --wait
+az provider register --namespace Microsoft.StandbyPool --wait
+
+FEATURE_ERROR_FILE="results/standby-feature-show.stderr.log"
+rm -f "$FEATURE_ERROR_FILE"
+
+set +e
+FEATURE_JSON="$(az feature show \
+  --namespace Microsoft.StandbyPool \
+  --name StandbyContainerGroupPoolPreview \
+  --output json 2>"$FEATURE_ERROR_FILE")"
+FEATURE_RC=$?
+set -e
+
+if [[ "$FEATURE_RC" -eq 0 ]]; then
+  FEATURE_STATE="$(jq -r '.properties.state' <<<"$FEATURE_JSON")"
+  if [[ -z "$FEATURE_STATE" || "$FEATURE_STATE" == "null" ]]; then
+    printf 'StandbyContainerGroupPoolPreview state could not be parsed.\n' >&2
+    exit 1
+  fi
+  if [[ "$FEATURE_STATE" != "Registered" ]]; then
+    az feature register \
+      --namespace Microsoft.StandbyPool \
+      --name StandbyContainerGroupPoolPreview
+    printf 'Feature registration was requested; wait until it is Registered before the workshop.\n' >&2
+    exit 1
+  fi
+elif grep -qi 'ResourceNotFound' "$FEATURE_ERROR_FILE"; then
+  printf 'The preview feature is no longer exposed; provider registration is the current GA gate.\n'
+else
+  cat "$FEATURE_ERROR_FILE" >&2
+  exit "$FEATURE_RC"
+fi
+
+rm -f "$FEATURE_ERROR_FILE"
+```
+
+이 단계의 핵심은 역사적으로 `StandbyContainerGroupPoolPreview` 가 필요했던 구독과, 이제 feature 조회가 `ResourceNotFound` 로 끝나는 GA 구독을 둘 다 안전하게 처리하는 것입니다.
+
+### 2) 워크숍 하루 전: Standby Pool Resource Provider 서비스 주체 RBAC 준비
+
+공개 MCR 이미지를 쓰더라도 Standby Pool Resource Provider 서비스 주체에는 구독 범위 역할 세 개가 필요합니다.
+
+```bash
+cd ~/aci-vn2-performance-workshop
+
+set -euo pipefail
+
+SUB_ID="$(az account show --query id -o tsv)"
+if [[ -z "$SUB_ID" ]]; then
+  printf 'Subscription ID could not be resolved.\n' >&2
+  exit 1
+fi
+SUB_SCOPE="/subscriptions/$SUB_ID"
+
+SP_OBJECT_ID="$(az ad sp list \
+  --display-name 'Standby Pool Resource Provider' \
+  --query '[0].id' -o tsv)"
+if ! test -n "$SP_OBJECT_ID"; then
+  printf 'Standby Pool Resource Provider service principal was not found.\n' >&2
+  exit 1
+fi
+
+for ROLE in \
+  "Azure Container Instances Contributor" \
+  "Standby Container Group Pool Contributor" \
+  "Network Contributor"; do
+  az role assignment create \
+    --assignee-object-id "$SP_OBJECT_ID" \
+    --assignee-principal-type ServicePrincipal \
+    --role "$ROLE" \
+    --scope "$SUB_SCOPE"
+done
+
+az role assignment list \
+  --assignee-object-id "$SP_OBJECT_ID" \
+  --scope "$SUB_SCOPE" \
+  --output table
+```
+
+필수 역할은 다음 세 가지입니다.
+
+- `Azure Container Instances Contributor`
+- `Standby Container Group Pool Contributor`
+- `Network Contributor`
+
+### 3) 실습 시작 직전: preflight 실행과 결과 확인
+
+이제 저장소가 제공하는 `scripts/preflight.sh` 로 참가자 환경을 다시 검증합니다.
 
 ```bash
 cd ~/aci-vn2-performance-workshop
@@ -29,17 +131,48 @@ az account show --output table
 cat results/environment.json
 ```
 
-예상 결과는 “Preflight checks passed.” 메시지와 함께 subscription, tenant, tool version, pinned VN2 chart version, benchmark image digest가 `results/environment.json`에 기록되는 것입니다.
+성공 예시는 다음과 같습니다.
 
-Owner 권한이 없거나 provider 등록이 끝나지 않았다면 Module 02로 진행하지 말고 여기서 중단합니다. 이 워크숍은 fail-fast를 원칙으로 하므로 불완전한 선행 조건을 묵인하지 않습니다.
+```text
+Preflight checks passed.
+```
+
+이후 `results/environment.json` 에 subscription, tenant, tool version, pinned VN2 chart version, benchmark image digest가 기록되어 있어야 합니다.
+
+실패 예시는 다음과 같습니다.
+
+```text
+ERROR: Microsoft.StandbyPool must be Registered; found NotRegistered
+```
+
+또는 feature가 아직 등록되지 않았다면 다음과 비슷한 메시지가 나옵니다.
+
+```text
+ERROR: StandbyContainerGroupPoolPreview is not registered. Run: az feature register --namespace Microsoft.StandbyPool --name StandbyContainerGroupPoolPreview
+```
+
+Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모듈로 진행하지 말고** 여기서 중단합니다. 이 워크숍은 fail-fast를 원칙으로 하므로 불완전한 선행 조건을 묵인하지 않습니다.
 
 ## 완료 체크포인트
 
 - 현재 구독이 교육용 전용 구독으로 확인되었다.
+- `Microsoft.ContainerInstance` 와 `Microsoft.StandbyPool` provider가 모두 Registered 상태다.
+- `StandbyContainerGroupPoolPreview` 가 Registered 이거나, `ResourceNotFound` 로 GA 전환이 확인되었다.
+- `Standby Pool Resource Provider` 서비스 주체에 세 가지 구독 역할이 부여되었다.
 - Cloud Shell 또는 로컬 Bash 환경에서 필수 도구가 모두 실행된다.
 - `./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5` 가 성공했다.
 - `results/environment.json` 파일이 생성되었다.
 - quota 부족, Owner 누락, provider 미등록 시 어떤 항목을 먼저 고쳐야 하는지 메모했다.
+
+## 문제 해결
+
+| 증상 | 확인할 것 | 확인 명령 | 조치 |
+| --- | --- | --- | --- |
+| `Microsoft.StandbyPool must be Registered` | provider 등록 상태 | `az provider show --namespace Microsoft.StandbyPool --query registrationState -o tsv` | `az provider register --namespace Microsoft.StandbyPool --wait` 후 다시 실행 |
+| `ResourceNotFound` 가 feature show 에서 반환됨 | GA 전환 여부 | `grep -i ResourceNotFound results/standby-feature-show.stderr.log` | 오류가 아니라면 provider Registered 만 확인하고 계속 진행 |
+| `Standby Pool Resource Provider service principal was not found.` | Entra 조회 결과 | `az ad sp list --display-name 'Standby Pool Resource Provider' --output table` | display name 오타 여부 확인, 필요 시 관리자와 구독 상태 확인 |
+| role assignment create 가 실패함 | 현재 사용자 권한 | `az role assignment list --assignee "$(az account show --query user.name -o tsv)" --scope "/subscriptions/$(az account show --query id -o tsv)" --include-inherited --output table` | 전용 교육용 구독 Owner 로 다시 로그인 |
+| preflight가 quota 또는 SKU 부족으로 실패함 | Korea Central 가용량 | `./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5` | quota 증설 또는 구독 교체 후 다시 시작 |
 
 ## 이전/다음
 

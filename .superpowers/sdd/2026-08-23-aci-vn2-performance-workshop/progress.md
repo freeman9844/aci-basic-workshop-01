@@ -62,5 +62,6 @@ Task 6: complete (commits 78a16b1..ef6435c, review clean)
 Task 7: minor (deferred): Module 03 objective says two labels separate four paths, but the topology has three node paths and four scenarios; Task 9 should clarify this wording.
 Task 7: complete (commits ef6435c..4b6251a, review clean)
 
-Task 7: complete (workshop overview README, module shells, docs navigation contract, focused docs test + full suite green)
-Task 8: complete (docs/01-02 now cover provider registration, historical feature/GA flow, Standby Pool Resource Provider RBAC, Azure foundation AKS/NAT/kubelet grants, focused doc test + full suite green)
+Task 8: fix round 1/5 (1 blocker and 1 coupled spec violation addressed — Kubernetes 1.34 patch discovery now reads `patchVersions` with numeric sorting; service CIDR moved outside the VNet; commits 91d8787..d6c25a5)
+Task 8: complete (commits 4b6251a..d6c25a5, review clean)
+Task 9: complete (docs/03 now documents pinned concurrent `vn2-ondemand` + `vn2-standby` installs, single webhook owner inspection, `STANDBY_POOL` export, focused doc test + full suite green)

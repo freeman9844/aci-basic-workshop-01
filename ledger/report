@@ -1,0 +1,5 @@
+Task 8: fix round 1/5
+- RED: bash tests/docs/test-prerequisites-foundation.sh -> docs/02-azure-foundation.md is missing required text: --query "values[?version=='1.34'].patchVersions | [0]"
+- GREEN: bash tests/docs/test-prerequisites-foundation.sh
+- FULL SUITE: python3 -m unittest discover -s tests -p 'test_*.py' -v && bash tests/scripts/test-check-standby-pool.sh && bash tests/scripts/test-run-benchmark.sh && bash tests/scripts/test-preflight.sh && bash tests/scripts/test-cleanup.sh && bash tests/docs/test-overview.sh && bash tests/docs/test-prerequisites-foundation.sh
+- DIFF CHECK: git diff --check

@@ -49,7 +49,8 @@ required_foundation = [
     "AKS_SUBNET=\"snet-aks\"",
     "CG_SUBNET=\"cg\"",
     "VM_SIZE=\"${VM_SIZE:-Standard_D8s_v5}\"",
-    "starts_with(version, '1.34.')",
+    "--query \"values[?version=='1.34'].patchVersions | [0]\"",
+    "jq -r 'if type==\"object\" then (keys_unsorted | map(select(startswith(\"1.34.\"))) | sort_by(split(\".\")|map(tonumber)) | last // \"\") else \"\" end'",
     "test -n \"$K8S_VERSION\"",
     "10.0.0.0/8",
     "10.0.0.0/24",
@@ -66,14 +67,20 @@ required_foundation = [
     "--network-plugin azure",
     "--node-vm-size \"$VM_SIZE\"",
     "--kubernetes-version \"$K8S_VERSION\"",
-    "--service-cidr 10.4.0.0/16",
-    "--dns-service-ip 10.4.0.10",
+    "--service-cidr 172.16.0.0/16",
+    "--dns-service-ip 172.16.0.10",
     "identityProfile.kubeletidentity.objectId",
     "nodeResourceGroup",
     "az role assignment create",
     "--role Contributor",
     "az aks get-credentials",
     "benchmark-path=aks",
+]
+
+forbidden_foundation = [
+    "values[?starts_with(version, '1.34.')].version | [0]",
+    "--service-cidr 10.4.0.0/16",
+    "--dns-service-ip 10.4.0.10",
 ]
 
 for item in required_prereq:
@@ -83,6 +90,10 @@ for item in required_prereq:
 for item in required_foundation:
     if item not in foundation_text:
         raise SystemExit(f"docs/02-azure-foundation.md is missing required text: {item}")
+
+for item in forbidden_foundation:
+    if item in foundation_text:
+        raise SystemExit(f"docs/02-azure-foundation.md must not contain outdated text: {item}")
 
 for path, text in ((prereq, prereq_text), (foundation, foundation_text)):
     for heading in ("## 완료 체크포인트", "## 문제 해결", "## 이전/다음"):

@@ -9,3 +9,8 @@ Task 9: write dual VN2 installation module
 - GREEN: bash tests/docs/test-install-dual-vn2.sh
 - FULL SUITE: python3 -m unittest discover -s tests -p 'test_*.py' -v && bash tests/scripts/test-check-standby-pool.sh && bash tests/scripts/test-run-benchmark.sh && bash tests/scripts/test-preflight.sh && bash tests/scripts/test-cleanup.sh && bash tests/docs/test-overview.sh && bash tests/docs/test-prerequisites-foundation.sh && bash tests/docs/test-install-dual-vn2.sh
 - DIFF CHECK: git diff --check
+
+Task 9: fix round 1
+- RED: bash tests/docs/test-install-dual-vn2.sh -> docs/03-install-dual-vn2.md is missing required text: kubectl get mutatingwebhookconfiguration virtual-node-admission-controller \
+- GREEN: bash tests/docs/test-install-dual-vn2.sh
+- FULL SUITE: python3 -m unittest discover -s tests -p 'test_*.py' -v && bash tests/scripts/test-check-standby-pool.sh && bash tests/scripts/test-run-benchmark.sh && bash tests/scripts/test-preflight.sh && bash tests/scripts/test-cleanup.sh && bash tests/docs/test-overview.sh && bash tests/docs/test-prerequisites-foundation.sh && bash tests/docs/test-install-dual-vn2.sh && git diff --check

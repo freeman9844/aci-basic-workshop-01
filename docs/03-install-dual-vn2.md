@@ -101,7 +101,7 @@ Standby 쪽은 `standbyPool.standbyPoolsCpu=1`, `standbyPool.standbyPoolsMemory=
 아래 명령으로 실제 소유권을 확인합니다.
 
 ```bash
-kubectl get validatingwebhookconfiguration virtual-node-admission-controller \
+kubectl get mutatingwebhookconfiguration virtual-node-admission-controller \
   -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}{" / "}{.metadata.annotations.meta\.helm\.sh/release-namespace}{"\n"}'
 
 kubectl get deployment -A | grep admission-controller
@@ -113,13 +113,27 @@ helm list -A | grep '^vn2-'
 ### 5) 두 virtual node Ready 확인과 path 라벨 점검
 
 ```bash
-kubectl wait --for=condition=Ready node \
-  -l benchmark-path=ondemand --timeout=10m
-kubectl wait --for=condition=Ready node \
-  -l benchmark-path=standby --timeout=10m
+for label in ondemand standby; do
+  deadline=$((SECONDS + 600))
+
+  until kubectl get nodes -l "benchmark-path=${label}" --no-headers 2>/dev/null | grep -q .; do
+    if (( SECONDS >= deadline )); then
+      printf 'Label benchmark-path=%s did not appear within 10 minutes\n' "${label}" >&2
+      kubectl get nodes -L benchmark-path -o wide >&2
+      kubectl get pods -A -o wide >&2
+      exit 1
+    fi
+    sleep 10
+  done
+
+  kubectl wait --for=condition=Ready node \
+    -l "benchmark-path=${label}" --timeout=10m
+done
 
 kubectl get nodes -L benchmark-path -o wide
 ```
+
+`kubectl wait` 는 label 이 아직 안 생긴 짧은 race 구간에서는 바로 끝날 수 있으므로, 위처럼 먼저 label 등장을 최대 10분 동안 bounded polling 한 뒤 Ready wait 로 넘어갑니다.
 
 예상 출력은 환경마다 이름이 달라도 다음 구조를 포함해야 합니다.
 
@@ -192,7 +206,7 @@ az standby-container-group-pool status \
 | 증상 | 원인 후보 | 확인 명령 | 조치 |
 | --- | --- | --- | --- |
 | `kubectl wait` 가 오래 걸리고 VN2 Pod가 Pending 이다 | AKS 노드에 두 VN2 인프라를 동시에 올릴 8-vCPU/32-GiB headroom 이 부족함 | `kubectl get nodes -o wide`, `kubectl describe node "$(kubectl get nodes -l benchmark-path=aks -o jsonpath='{.items[0].metadata.name}')"`, `kubectl get pods -A -o wide`, `kubectl get events -A --sort-by=.metadata.creationTimestamp \| tail -n 40` | `Standard_D8s_v5` 이상으로 다시 만들거나, 다른 워크로드를 비운 뒤 Module 02부터 재시작 |
-| Helm 설치가 webhook annotation 충돌로 실패한다 | duplicate webhook ownership: 두 release가 모두 `virtual-node-admission-controller` 를 소유하려고 함 | `kubectl get validatingwebhookconfiguration virtual-node-admission-controller -o yaml \| grep 'meta.helm.sh/release-'`, `helm status vn2-ondemand -n vn2-ondemand`, `helm status vn2-standby -n vn2-standby` | standby release에 `admissionControllerReplicaCount=0` 이 있는지 확인하고, 잘못 생성된 standby release를 제거한 뒤 다시 설치 |
+| Helm 설치가 webhook annotation 충돌로 실패한다 | duplicate webhook ownership: 두 release가 모두 `virtual-node-admission-controller` 를 소유하려고 함 | `kubectl get mutatingwebhookconfiguration virtual-node-admission-controller -o yaml \| grep 'meta.helm.sh/release-'`, `helm status vn2-ondemand -n vn2-ondemand`, `helm status vn2-standby -n vn2-standby` | standby release에 `admissionControllerReplicaCount=0` 이 있는지 확인하고, 잘못 생성된 standby release를 제거한 뒤 다시 설치 |
 | standby 설치가 곧바로 실패한다 | rejected 1 vCPU/2 GiB profile: 지역/API가 `1 vCPU / 2 GiB` 조합을 거부함 | `helm status vn2-standby -n vn2-standby`, `kubectl get events -n vn2-standby --sort-by=.metadata.creationTimestamp \| tail -n 20`, `az standby-container-group-pool list --resource-group "$RG" --output json` | 자동 대체하지 말고 현재 구독/지역에서 허용되는 더 큰 최소 profile을 확인한 뒤 값을 명시적으로 조정 |
 | pool 이 생성되지 않거나 authorization 오류가 난다 | missing RBAC: Standby Pool Resource Provider 또는 kubelet identity 권한 누락 | `az role assignment list --assignee-object-id "$(az ad sp list --display-name 'Standby Pool Resource Provider' --query '[0].id' -o tsv)" --scope "/subscriptions/$(az account show --query id -o tsv)" --output table`, `az aks show -g "$RG" -n "$AKS" --query '{kubelet:identityProfile.kubeletidentity.objectId,nodeRg:nodeResourceGroup}' -o json` | Module 01의 세 가지 구독 역할과 Module 02의 kubelet Contributor 권한을 다시 부여한 뒤 Helm install 재시도 |
 | pool status 가 healthy 로 바뀌지 않는다 | degraded pool 또는 quota/ACI 백엔드 문제 | `az standby-container-group-pool status --resource-group "$RG" --name "$STANDBY_POOL" --version latest --output json`, `az standby-container-group-pool list --resource-group "$RG" --output table`, `kubectl get nodes -l benchmark-path=standby -o wide`, `kubectl get events -A --sort-by=.metadata.creationTimestamp \| tail -n 40` | degraded 원인을 먼저 캡처하고 quota, provider 상태, region health 를 확인한 뒤 capacity가 5로 회복될 때까지 다음 모듈로 넘어가지 않음 |

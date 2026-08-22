@@ -39,6 +39,7 @@ required_strings = [
     "virtual-node-admission-controller",
     "meta.helm.sh/release-name",
     "meta.helm.sh/release-namespace",
+    "kubectl get mutatingwebhookconfiguration virtual-node-admission-controller \\",
     "$RG",
     "`cg`",
     "kubectl config current-context",
@@ -53,9 +54,14 @@ required_strings = [
     "--set aciResourceGroupName=\"$RG\"",
     "--set nodeLabels=\"benchmark-path=ondemand\"",
     "--set nodeLabels=\"benchmark-path=standby\"",
+    "for label in ondemand standby; do",
+    "deadline=$((SECONDS + 600))",
+    "kubectl get nodes -l \"benchmark-path=${label}\" --no-headers 2>/dev/null",
+    "Label benchmark-path=%s did not appear within 10 minutes\\n",
+    "kubectl get nodes -L benchmark-path -o wide >&2",
+    "sleep 10",
     "kubectl wait --for=condition=Ready node \\",
-    "-l benchmark-path=ondemand --timeout=10m",
-    "-l benchmark-path=standby --timeout=10m",
+    "-l \"benchmark-path=${label}\" --timeout=10m",
     "kubectl get nodes -L benchmark-path -o wide",
     "mapfile -t POOLS < <(az standby-container-group-pool list",
     "--query '[].name' -o tsv",
@@ -83,6 +89,7 @@ forbidden_strings = [
     "nodeLabels.benchmark-path=ondemand",
     "nodeLabels.benchmark-path=standby",
     "check-standby-pool.sh -g",
+    "kubectl get validatingwebhookconfiguration virtual-node-admission-controller",
 ]
 
 for item in required_strings:

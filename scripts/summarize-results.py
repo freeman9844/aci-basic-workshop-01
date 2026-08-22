@@ -1,13 +1,34 @@
 #!/usr/bin/env python3
-import sys
-import os
+import argparse
+import csv
 import json
 import math
 import statistics
-import argparse
+import sys
 from pathlib import Path
 
-VALID_SCENARIOS = {"aks", "vn2-ondemand", "vn2-standby-uncached", "vn2-standby-cached"}
+VALID_SCENARIOS = {
+    "aks",
+    "vn2-ondemand",
+    "vn2-standby-uncached",
+    "vn2-standby-cached",
+}
+
+SCENARIO_ORDER = [
+    "aks",
+    "vn2-ondemand",
+    "vn2-standby-uncached",
+    "vn2-standby-cached",
+]
+
+SUMMARY_FIELDS = {
+    "schema_version",
+    "scenario",
+    "run",
+    "pods",
+    "batch",
+}
+
 
 def nearest_rank(values, percentile):
     ordered = sorted(float(value) for value in values)
@@ -15,6 +36,7 @@ def nearest_rank(values, percentile):
         return None
     rank = max(1, math.ceil((percentile / 100.0) * len(ordered)))
     return ordered[rank - 1]
+
 
 def metric_summary(values):
     ordered = sorted(float(value) for value in values)
@@ -28,45 +50,57 @@ def metric_summary(values):
         "max": ordered[-1],
     }
 
+
 def speedup_ratio(baseline_ms, candidate_ms):
     if baseline_ms is None or candidate_ms in (None, 0):
         return None
     return round(float(baseline_ms) / float(candidate_ms), 3)
 
+
+def _load_json_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Malformed JSON in {path}: {exc.msg}") from exc
+
+
 def load_runs(path):
     path = Path(path)
     runs = []
     if path.is_file():
-        # Single file
-        if path.suffix == ".json":
-            with open(path, "r", encoding="utf-8") as f:
-                runs.append(json.load(f))
-    elif path.is_dir():
-        # Directory search
+        if path.suffix.lower() == ".json":
+            runs.append(_load_json_file(path))
+        return runs
+
+    if path.is_dir():
         for item in sorted(path.glob("**/*.json")):
-            with open(item, "r", encoding="utf-8") as f:
-                try:
-                    runs.append(json.load(f))
-                except json.JSONDecodeError:
-                    pass
+            runs.append(_load_json_file(item))
+
     return runs
 
+
+def _run_metadata(run):
+    return {
+        key: value
+        for key, value in run.items()
+        if key not in SUMMARY_FIELDS
+    }
+
+
+def _copy_pod(pod, pod_index):
+    copied = {"pod_index": pod_index}
+    copied.update(pod)
+    return copied
+
+
 def summarize_scenario(runs):
-    # Runs should be from the same scenario
     if not runs:
         return {}
 
     scenario = runs[0].get("scenario")
-    
-    # Validation: schema version and scenario name
-    for run in runs:
-        if run.get("schema_version") != 1:
-            raise ValueError(f"Unsupported schema version: {run.get('schema_version')}")
-        sc = run.get("scenario")
-        if sc not in VALID_SCENARIOS:
-            raise ValueError(f"Unknown scenario name: {sc}")
-        if sc != scenario:
-            raise ValueError(f"Mixed scenarios in run list: {sc} and {scenario}")
+    if scenario not in VALID_SCENARIOS:
+        raise ValueError(f"Unknown scenario name: {scenario}")
 
     ready_samples = 0
     failed_count = 0
@@ -75,24 +109,40 @@ def summarize_scenario(runs):
     create_to_ready_vals = []
     create_to_scheduled_vals = []
     scheduled_to_ready_vals = []
-
     first_ready_vals = []
     all_ready_vals = []
+    evidence_runs = []
 
     for run in runs:
-        # Pods
-        for pod in run.get("pods", []):
-            state = pod.get("terminal_state")
+        if run.get("schema_version") != 1:
+            raise ValueError(f"Unsupported schema version: {run.get('schema_version')}")
+        run_scenario = run.get("scenario")
+        if run_scenario not in VALID_SCENARIOS:
+            raise ValueError(f"Unknown scenario name: {run_scenario}")
+        if run_scenario != scenario:
+            raise ValueError(f"Mixed scenarios in run list: {run_scenario} and {scenario}")
+
+        pods = []
+        non_ready_pods = []
+        for pod_index, pod in enumerate(run.get("pods", []), start=1):
+            pod_record = _copy_pod(pod, pod_index)
+            pods.append(pod_record)
+
+            state = pod_record.get("terminal_state")
             if state == "failed":
                 failed_count += 1
+                non_ready_pods.append(pod_record)
             elif state == "timeout":
                 timeout_count += 1
+                non_ready_pods.append(pod_record)
             elif state == "ready":
                 ready_samples += 1
-                
-            cr = pod.get("create_to_ready_ms")
-            cs = pod.get("create_to_scheduled_ms")
-            sr = pod.get("scheduled_to_ready_ms")
+            else:
+                non_ready_pods.append(pod_record)
+
+            cr = pod_record.get("create_to_ready_ms")
+            cs = pod_record.get("create_to_scheduled_ms")
+            sr = pod_record.get("scheduled_to_ready_ms")
 
             if cr is not None:
                 create_to_ready_vals.append(cr)
@@ -101,14 +151,23 @@ def summarize_scenario(runs):
             if sr is not None:
                 scheduled_to_ready_vals.append(sr)
 
-        # Batch
-        batch = run.get("batch", {})
+        batch = dict(run.get("batch", {}))
         fr = batch.get("first_ready_ms")
         ar = batch.get("all_ready_ms")
         if fr is not None:
             first_ready_vals.append(fr)
         if ar is not None:
             all_ready_vals.append(ar)
+
+        evidence_runs.append(
+            {
+                "run": run.get("run"),
+                "metadata": _run_metadata(run),
+                "batch": batch,
+                "pods": pods,
+                "non_ready_pods": non_ready_pods,
+            }
+        )
 
     return {
         "scenario": scenario,
@@ -120,8 +179,150 @@ def summarize_scenario(runs):
         "create_to_scheduled_ms": metric_summary(create_to_scheduled_vals),
         "scheduled_to_ready_ms": metric_summary(scheduled_to_ready_vals),
         "batch_first_ready_ms": metric_summary(first_ready_vals),
-        "batch_all_ready_ms": metric_summary(all_ready_vals)
+        "batch_all_ready_ms": metric_summary(all_ready_vals),
+        "evidence": {"runs": evidence_runs},
     }
+
+
+def _format_cell(value):
+    return "" if value is None else value
+
+
+def _format_md_number(value):
+    return "-" if value is None else f"{value:.1f}"
+
+
+def _summaries_by_scenario(runs):
+    grouped = {scenario: [] for scenario in VALID_SCENARIOS}
+    for run in runs:
+        scenario = run.get("scenario")
+        grouped.setdefault(scenario, []).append(run)
+    return grouped
+
+
+def _apply_speedups(summaries):
+    ondemand_summary = summaries.get("vn2-ondemand", {})
+    ondemand_pod_median = ondemand_summary.get("create_to_ready_ms", {}).get("median")
+    ondemand_batch_median = ondemand_summary.get("batch_all_ready_ms", {}).get("median")
+
+    for scenario, summary in summaries.items():
+        pod_median = summary.get("create_to_ready_ms", {}).get("median")
+        batch_median = summary.get("batch_all_ready_ms", {}).get("median")
+        if scenario in {"vn2-standby-uncached", "vn2-standby-cached"}:
+            summary["pod_speedup_ratio"] = speedup_ratio(ondemand_pod_median, pod_median)
+            summary["batch_speedup_ratio"] = speedup_ratio(ondemand_batch_median, batch_median)
+        else:
+            summary["pod_speedup_ratio"] = None
+            summary["batch_speedup_ratio"] = None
+
+
+def _build_csv(summaries):
+    rows = []
+    header = [
+        "scenario",
+        "runs_count",
+        "ready_samples",
+        "failed_count",
+        "timeout_count",
+        "pod_median_ms",
+        "pod_p95_ms",
+        "pod_min_ms",
+        "pod_max_ms",
+        "batch_first_ready_median_ms",
+        "batch_all_ready_median_ms",
+        "pod_speedup_ratio",
+        "batch_speedup_ratio",
+        "evidence_json",
+    ]
+    rows.append(header)
+
+    for scenario in SCENARIO_ORDER:
+        summary = summaries.get(scenario, {})
+        if not summary:
+            rows.append([scenario, 0, 0, 0, 0, "", "", "", "", "", "", "", "", ""])
+            continue
+        rows.append(
+            [
+                scenario,
+                summary["runs_count"],
+                summary["ready_samples"],
+                summary["failed_count"],
+                summary["timeout_count"],
+                _format_cell(summary["create_to_ready_ms"]["median"]),
+                _format_cell(summary["create_to_ready_ms"]["p95"]),
+                _format_cell(summary["create_to_ready_ms"]["min"]),
+                _format_cell(summary["create_to_ready_ms"]["max"]),
+                _format_cell(summary["batch_first_ready_ms"]["median"]),
+                _format_cell(summary["batch_all_ready_ms"]["median"]),
+                _format_cell(summary["pod_speedup_ratio"]),
+                _format_cell(summary["batch_speedup_ratio"]),
+                json.dumps(summary["evidence"], ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            ]
+        )
+
+    return rows
+
+
+def _build_markdown(summaries):
+    lines = []
+    lines.append("# ACI VN2 성능 워크숍 결과 요약")
+    lines.append("")
+    lines.append("## 시나리오별 성능 비교")
+    lines.append("")
+    lines.append(
+        "| 시나리오 | 실행 횟수 | 성공 Pod | 실패 Pod | 타임아웃 | "
+        "Pod 기동 Median (ms) | Pod 기동 P95 (ms) | Batch 첫 Ready Median (ms) | "
+        "Batch 완료 Median (ms) | Pod Speed-up | Batch Speed-up |"
+    )
+    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+
+    for scenario in SCENARIO_ORDER:
+        summary = summaries.get(scenario, {})
+        if not summary:
+            lines.append(f"| {scenario} | 0 | 0 | 0 | 0 | - | - | - | - | - | - |")
+            continue
+        pod_median = summary["create_to_ready_ms"]["median"]
+        pod_p95 = summary["create_to_ready_ms"]["p95"]
+        batch_first_ready = summary["batch_first_ready_ms"]["median"]
+        batch_all_ready = summary["batch_all_ready_ms"]["median"]
+        pod_speedup = summary["pod_speedup_ratio"]
+        batch_speedup = summary["batch_speedup_ratio"]
+        lines.append(
+            f"| {scenario} | {summary['runs_count']} | {summary['ready_samples']} | {summary['failed_count']} | "
+            f"{summary['timeout_count']} | "
+            f"{_format_md_number(pod_median)} | {_format_md_number(pod_p95)} | "
+            f"{_format_md_number(batch_first_ready)} | {_format_md_number(batch_all_ready)} | "
+            f"{(str(pod_speedup) + 'x') if pod_speedup is not None else '-'} | "
+            f"{(str(batch_speedup) + 'x') if batch_speedup is not None else '-'} |"
+        )
+
+    lines.append("")
+    lines.append("## 증거")
+    lines.append("")
+    for scenario in SCENARIO_ORDER:
+        summary = summaries.get(scenario, {})
+        if not summary:
+            continue
+        lines.append(f"### {scenario}")
+        lines.append("```json")
+        lines.extend(
+            json.dumps(
+                summary["evidence"],
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            ).splitlines()
+        )
+        lines.append("```")
+        lines.append("")
+
+    lines.append(
+        "> **주의:** 각 시나리오별 15개 Pod 표본(5개 Pod x 3회)은 "
+        "기술 통계(descriptive statistics) 수준이며, 공식적인 SLA 또는 용량 산정의 근거로 사용될 수 없습니다."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Summarize raw VN2 benchmark results")
@@ -133,104 +334,44 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    runs = load_runs(input_path)
-    if not runs:
-        print(f"No runs found in {input_path}")
-        sys.exit(0)
+    try:
+        runs = load_runs(input_path)
+        if not runs:
+            print(f"No runs found in {input_path}")
+            return 0
 
-    # Group runs by scenario
-    by_scenario = {}
-    for run in runs:
-        sc = run.get("scenario")
-        if sc:
-            by_scenario.setdefault(sc, []).append(run)
+        by_scenario = _summaries_by_scenario(runs)
+        summaries = {}
+        for scenario in SCENARIO_ORDER:
+            if by_scenario.get(scenario):
+                summaries[scenario] = summarize_scenario(by_scenario[scenario])
 
-    summaries = {}
-    for sc, sc_runs in by_scenario.items():
-        summaries[sc] = summarize_scenario(sc_runs)
+        # Preserve unknown scenarios as an explicit failure rather than hiding them.
+        for scenario, scenario_runs in by_scenario.items():
+            if scenario not in VALID_SCENARIOS and scenario_runs:
+                summaries[scenario] = summarize_scenario(scenario_runs)
 
-    # Add speedup compared to vn2-ondemand baseline
-    ondemand_summary = summaries.get("vn2-ondemand", {})
-    ondemand_pod_median = ondemand_summary.get("create_to_ready_ms", {}).get("median")
-    ondemand_batch_median = ondemand_summary.get("batch_all_ready_ms", {}).get("median")
+        _apply_speedups(summaries)
 
-    for sc, summary in summaries.items():
-        pod_med = summary.get("create_to_ready_ms", {}).get("median")
-        batch_med = summary.get("batch_all_ready_ms", {}).get("median")
-        
-        # Calculate speedup if they are standby scenarios
-        if sc in ("vn2-standby-uncached", "vn2-standby-cached"):
-            summary["pod_speedup_ratio"] = speedup_ratio(ondemand_pod_median, pod_med)
-            summary["batch_speedup_ratio"] = speedup_ratio(ondemand_batch_median, batch_med)
-        else:
-            summary["pod_speedup_ratio"] = None
-            summary["batch_speedup_ratio"] = None
+        with open(output_dir / "summary.json", "w", encoding="utf-8") as handle:
+            json.dump(summaries, handle, indent=2, ensure_ascii=False)
 
-    # Write summary.json
-    with open(output_dir / "summary.json", "w", encoding="utf-8") as f:
-        json.dump(summaries, f, indent=2)
+        with open(output_dir / "summary.csv", "w", encoding="utf-8", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerows(_build_csv(summaries))
 
-    # Write summary.csv
-    csv_rows = [
-        "scenario,runs_count,ready_samples,failed_count,timeout_count,"
-        "pod_median_ms,pod_p95_ms,pod_min_ms,pod_max_ms,"
-        "batch_all_ready_median_ms,pod_speedup_ratio,batch_speedup_ratio"
-    ]
-    for sc in sorted(VALID_SCENARIOS):
-        summary = summaries.get(sc, {})
-        if not summary:
-            # Empty placeholders
-            csv_rows.append(f"{sc},0,0,0,0,,,,,,,")
-            continue
-        p_med = summary["create_to_ready_ms"]["median"]
-        p_p95 = summary["create_to_ready_ms"]["p95"]
-        p_min = summary["create_to_ready_ms"]["min"]
-        p_max = summary["create_to_ready_ms"]["max"]
-        b_med = summary["batch_all_ready_ms"]["median"]
-        p_sp = summary["pod_speedup_ratio"]
-        b_sp = summary["batch_speedup_ratio"]
-        
-        row = f"{sc},{summary['runs_count']},{summary['ready_samples']},{summary['failed_count']},{summary['timeout_count']}," \
-              f"{p_med if p_med is not None else ''},{p_p95 if p_p95 is not None else ''},{p_min if p_min is not None else ''},{p_max if p_max is not None else ''}," \
-              f"{b_med if b_med is not None else ''},{p_sp if p_sp is not None else ''},{b_sp if b_sp is not None else ''}"
-        csv_rows.append(row)
+        with open(output_dir / "summary.md", "w", encoding="utf-8") as handle:
+            handle.write(_build_markdown(summaries) + "\n")
 
-    with open(output_dir / "summary.csv", "w", encoding="utf-8") as f:
-        f.write("\n".join(csv_rows) + "\n")
-
-    # Write summary.md
-    md_content = []
-    md_content.append("# ACI VN2 성능 워크숍 결과 요약")
-    md_content.append("")
-    md_content.append("## 시나리오별 성능 비교")
-    md_content.append("")
-    md_content.append("| 시나리오 | 실행 횟수 | 성공 Pod | 실패 Pod | 타임아웃 | Pod 기동 Median (ms) | Pod 기동 P95 (ms) | Batch 완료 Median (ms) | Pod Speed-up | Batch Speed-up |")
-    md_content.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
-    
-    for sc in ["aks", "vn2-ondemand", "vn2-standby-uncached", "vn2-standby-cached"]:
-        summary = summaries.get(sc, {})
-        if not summary:
-            md_content.append(f"| {sc} | 0 | 0 | 0 | 0 | - | - | - | - | - |")
-            continue
-        p_med = f"{summary['create_to_ready_ms']['median']:.1f}" if summary['create_to_ready_ms']['median'] is not None else "-"
-        p_p95 = f"{summary['create_to_ready_ms']['p95']:.1f}" if summary['create_to_ready_ms']['p95'] is not None else "-"
-        b_med = f"{summary['batch_all_ready_ms']['median']:.1f}" if summary['batch_all_ready_ms']['median'] is not None else "-"
-        p_sp = f"{summary['pod_speedup_ratio']:.3f}x" if summary['pod_speedup_ratio'] is not None else "-"
-        b_sp = f"{summary['batch_speedup_ratio']:.3f}x" if summary['batch_speedup_ratio'] is not None else "-"
-        
-        md_content.append(
-            f"| {sc} | {summary['runs_count']} | {summary['ready_samples']} | {summary['failed_count']} | {summary['timeout_count']} | "
-            f"{p_med} | {p_p95} | {b_med} | {p_sp} | {b_sp} |"
+        print(
+            f"Successfully generated {output_dir / 'summary.json'}, "
+            f"{output_dir / 'summary.csv'}, and {output_dir / 'summary.md'}."
         )
-    
-    md_content.append("")
-    md_content.append("> **주의:** 각 시나리오별 15개 Pod 표본(5개 Pod x 3회)은 통계적 경향성을 보여주기 위한 기술 통계(descriptive statistics) 수준이며, 공식적인 SLA 또는 용량 산정의 근거로 사용될 수 없습니다.")
-    md_content.append("")
+        return 0
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
-    with open(output_dir / "summary.md", "w", encoding="utf-8") as f:
-        f.write("\n".join(md_content) + "\n")
-
-    print("Successfully generated results/summary.json, results/summary.csv, and results/summary.md.")
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

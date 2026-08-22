@@ -32,3 +32,9 @@ Task 11: add analysis and cleanup labs
 - GREEN: bash tests/docs/test-analysis-cleanup.sh
 - FULL SUITE: python3 -m unittest discover -s tests -p 'test_*.py' -v && bash tests/scripts/test-check-standby-pool.sh && bash tests/scripts/test-run-benchmark.sh && bash tests/scripts/test-preflight.sh && bash tests/scripts/test-cleanup.sh && bash tests/docs/test-overview.sh && bash tests/docs/test-prerequisites-foundation.sh && bash tests/docs/test-install-dual-vn2.sh && bash tests/docs/test-benchmark-modules.sh && bash tests/docs/test-analysis-cleanup.sh
 - DIFF CHECK: git diff --check
+
+Task 11: fix round 1
+- RED: bash tests/docs/test-analysis-cleanup.sh -> docs/06-analyze-results.md is missing required text: median 은 `ready_samples` 기준으로 계산합니다
+- GREEN: bash tests/docs/test-analysis-cleanup.sh
+- FULL SUITE: python3 -m unittest discover -s tests -p 'test_*.py' -v && bash tests/scripts/test-check-standby-pool.sh && bash tests/scripts/test-run-benchmark.sh && bash tests/scripts/test-preflight.sh && bash tests/scripts/test-cleanup.sh && bash tests/docs/test-overview.sh && bash tests/docs/test-prerequisites-foundation.sh && bash tests/docs/test-install-dual-vn2.sh && bash tests/docs/test-benchmark-modules.sh && bash tests/docs/test-analysis-cleanup.sh
+- DIFF CHECK: git diff --check

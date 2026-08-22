@@ -50,8 +50,9 @@ jq '.["vn2-standby-cached"] | {scenario, runs_count, ready_samples, failed_count
 - `scheduled->ready` 는 스케줄 이후 `ContainersReady` 까지이며 JSON 키는 `scheduled_to_ready_ms` 입니다.
 - `create->ready` 는 참가자가 가장 자주 비교하는 end-to-end 시간이며 JSON 키는 `create_to_ready_ms` 입니다.
 - batch first-ready 는 `batch_first_ready_ms`, batch all-ready 는 `batch_all_ready_ms` 로 읽습니다.
-- `ready_samples`, `failed_count`, `timeout_count` 는 성공 표본과 비성공 표본을 분리해 보여 주므로 failed/timeout sample을 aggregate 밖으로 숨기지 않습니다.
-- `pod_speedup_ratio`, `batch_speedup_ratio` 는 `vn2-ondemand` median 대비 speed-up 입니다. 즉 OnDemand-relative speed-up 입니다.
+- `ready_samples`, `failed_count`, `timeout_count` 는 성공 표본과 비성공 표본을 분리해 보여 주므로 failed/timeout sample을 aggregate 밖으로 숨기지 않습니다. median 은 `ready_samples` 기준으로 계산합니다.
+- `pod_speedup_ratio` 는 `create_to_ready_ms` median 기준 `vn2-ondemand` 대비 speed-up 입니다.
+- `batch_speedup_ratio` 는 `batch_all_ready_ms` median 기준 `vn2-ondemand` 대비 speed-up 입니다. first-ready 기준이 아닙니다.
 
 ### 3) 개별 run evidence 해석
 
@@ -85,9 +86,9 @@ scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p
 
 ### 5) median, nearest-rank p95, speed-up 를 해석할 때의 원칙
 
-- median 은 각 시나리오 15개 Pod 표본의 가운데 값입니다.
+- median 은 `ready_samples` 기준으로 계산합니다. all-success 시나리오에서는 `ready_samples=15` 이므로 15개 성공 Pod 표본의 가운데 값입니다.
 - nearest-rank p95 는 보간하지 않습니다. 샘플 수가 15개일 때도 nearest-rank p95 를 그대로 쓰며, interpolated percentile 로 다시 계산하지 않습니다.
-- `speed-up` 은 `vn2-ondemand` median 을 분모/분자로 비교한 상대값이지 절대 SLA가 아닙니다.
+- `pod_speedup_ratio` 는 `create_to_ready_ms` median 기준, `batch_speedup_ratio` 는 `batch_all_ready_ms` median 기준입니다. `speed-up` 은 `vn2-ondemand` median 을 분모/분자로 비교한 상대값이지 절대 SLA가 아닙니다.
 - `failed_count`, `timeout_count` 가 0이 아니면 성공 Pod의 median 이 빨라도 같은 줄에서 함께 해석해야 합니다.
 - regular AKS 수치는 이미 프로비저닝된 VM 노드와 warm image cache 영향을 받습니다. regular AKS warm image cache 결과를 VN2 burst 비용 비교로 읽으면 안 되며, burst 비용 비교가 아닙니다.
 - 특히 regular AKS 는 노드가 계속 떠 있는 구조이므로 cache/cost 조건이 `vn2-ondemand` 또는 standby 경로와 다릅니다.

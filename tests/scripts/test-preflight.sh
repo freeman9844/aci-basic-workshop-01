@@ -86,7 +86,19 @@ case "${1-} ${2-}" in
       printf 'Unexpected az rest call: %s\n' "$*" >&2
       exit 1
     fi
-    cat "$AZ_ACI_USAGE_JSON"
+    case "${AZ_ACI_USAGE_MODE:-success}" in
+      success)
+        cat "$AZ_ACI_USAGE_JSON"
+        ;;
+      error)
+        printf '%s\n' "${AZ_ACI_USAGE_ERROR:-simulated az rest failure}" >&2
+        exit "${AZ_ACI_USAGE_STATUS:-1}"
+        ;;
+      *)
+        printf 'Unexpected AZ_ACI_USAGE_MODE=%s\n' "${AZ_ACI_USAGE_MODE:-}" >&2
+        exit 1
+        ;;
+    esac
     ;;
   *)
     printf 'Unexpected az call: %s\n' "$*" >&2
@@ -129,9 +141,9 @@ chmod +x "$TMP/bin/helm"
 write_file() {
   local path="$1"
   shift
-  cat >"$path" <<EOF
+  cat >"$path" <<EOF_INNER
 $*
-EOF
+EOF_INNER
 }
 
 set_valid_defaults() {
@@ -143,10 +155,13 @@ set_valid_defaults() {
   write_file "$TMP/role-assignments.json" '[{"roleDefinitionName":"Owner","scope":"/providers/Microsoft.Management/managementGroups/example"}]'
   write_file "$TMP/vm-skus.json" '[{"name":"Standard_D8s_v5","locations":["koreacentral"],"restrictions":[]}]'
   write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":10,"limit":32}]'
-  write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20}]}'
+  write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20},{"name":{"value":"StandardSpotCores","localizedValue":"Standard spot SKU cores"},"currentValue":0,"limit":20},{"name":{"value":"StandardK80Cores","localizedValue":"Standard K80 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardP100Cores","localizedValue":"Standard P100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardV100Cores","localizedValue":"Standard V100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"DedicatedContainerGroups","localizedValue":"Dedicated container groups"},"currentValue":0,"limit":20},{"name":{"value":"DedicatedCores","localizedValue":"Dedicated cores"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialContainerGroups","localizedValue":"Confidential container groups"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialCores","localizedValue":"Confidential cores"},"currentValue":0,"limit":20}]}'
   write_file "$TMP/kubectl-version.json" '{"clientVersion":{"gitVersion":"v1.30.2"}}'
   HELM_VERSION='v3.16.1'
   AZ_FEATURE_MODE='registered'
+  AZ_ACI_USAGE_MODE='success'
+  AZ_ACI_USAGE_ERROR='simulated az rest failure'
+  AZ_ACI_USAGE_STATUS='1'
 }
 
 run_preflight() {
@@ -165,6 +180,9 @@ run_preflight() {
     AZ_VM_SKUS_JSON="$TMP/vm-skus.json" \
     AZ_VM_USAGE_JSON="$TMP/vm-usage.json" \
     AZ_ACI_USAGE_JSON="$TMP/aci-usage.json" \
+    AZ_ACI_USAGE_MODE="${AZ_ACI_USAGE_MODE-success}" \
+    AZ_ACI_USAGE_ERROR="${AZ_ACI_USAGE_ERROR-simulated az rest failure}" \
+    AZ_ACI_USAGE_STATUS="${AZ_ACI_USAGE_STATUS-1}" \
     KUBECTL_VERSION_JSON="$TMP/kubectl-version.json" \
     HELM_VERSION="${HELM_VERSION-v3.16.1}" \
     "$ROOT/scripts/preflight.sh" \
@@ -206,7 +224,7 @@ PY
 baseline_environment_json="$(cat "$ENVIRONMENT_JSON")"
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20}]}'
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20}]}'
 legacy_success_output="$(run_preflight 2>&1)"
 grep -F 'Preflight checks passed.' <<<"$legacy_success_output" >/dev/null
 test -f "$ENVIRONMENT_JSON"
@@ -239,13 +257,28 @@ set -e
 grep -F 'az feature register --namespace Microsoft.StandbyPool --name StandbyContainerGroupPoolPreview' <<<"$feature_output" >/dev/null
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":16,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20}]}'
+boundary_success_output="$(run_preflight 2>&1)"
+grep -F 'Preflight checks passed.' <<<"$boundary_success_output" >/dev/null
+test -f "$ENVIRONMENT_JSON"
+
+set_valid_defaults
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":11,"limit":20}]}'
+set +e
+aci_core_headroom_output="$(run_preflight 2>&1)"
+aci_core_headroom_status=$?
+set -e
+[[ "$aci_core_headroom_status" -ne 0 ]]
+grep -F 'ACI StandardCores headroom is 9; need at least 10' <<<"$aci_core_headroom_output" >/dev/null
+[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+
+set_valid_defaults
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":11,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20}]}'
 set +e
 aci_group_headroom_output="$(run_preflight 2>&1)"
 aci_group_headroom_status=$?
 set -e
 [[ "$aci_group_headroom_status" -ne 0 ]]
-grep -F 'ACI container groups headroom is 4; need at least 5' <<<"$aci_group_headroom_output" >/dev/null
+grep -F 'ACI container groups headroom is 9; need at least 10' <<<"$aci_group_headroom_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
@@ -271,7 +304,7 @@ grep -F '"value": {' <<<"$aci_non_array_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20}]}'
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20}]}'
 set +e
 aci_missing_group_output="$(run_preflight 2>&1)"
 aci_missing_group_status=$?
@@ -282,7 +315,7 @@ grep -F '"StandardCores"' <<<"$aci_missing_group_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20}]}'
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20}]}'
 set +e
 aci_both_aliases_output="$(run_preflight 2>&1)"
 aci_both_aliases_status=$?
@@ -294,23 +327,74 @@ grep -F '"StandardContainerGroups"' <<<"$aci_both_aliases_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":11,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20}]}'
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":11,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20}]}'
 set +e
-aci_duplicate_usage_output="$(run_preflight 2>&1)"
-aci_duplicate_usage_status=$?
+aci_duplicate_group_output="$(run_preflight 2>&1)"
+aci_duplicate_group_status=$?
 set -e
-[[ "$aci_duplicate_usage_status" -ne 0 ]]
-grep -F 'Unexpected ACI usage fields; refusing to guess.' <<<"$aci_duplicate_usage_output" >/dev/null
-grep -F '"ContainerGroups"' <<<"$aci_duplicate_usage_output" >/dev/null
+[[ "$aci_duplicate_group_status" -ne 0 ]]
+grep -F 'Unexpected ACI usage fields; refusing to guess.' <<<"$aci_duplicate_group_output" >/dev/null
+grep -F '"ContainerGroups"' <<<"$aci_duplicate_group_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20},{"name":{"value":"UnexpectedQuota","localizedValue":"Unexpected quota"},"currentValue":0,"limit":10}]}'
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20},{"name":{"value":"UnexpectedQuota","localizedValue":"Unexpected quota"},"currentValue":0,"limit":10}]}'
+aci_extra_rows_output="$(run_preflight 2>&1)"
+grep -F 'Preflight checks passed.' <<<"$aci_extra_rows_output" >/dev/null
+test -f "$ENVIRONMENT_JSON"
+
+set_valid_defaults
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20}]}'
 set +e
-aci_output="$(run_preflight 2>&1)"
-aci_status=$?
+aci_missing_standard_cores_output="$(run_preflight 2>&1)"
+aci_missing_standard_cores_status=$?
 set -e
-[[ "$aci_status" -ne 0 ]]
-grep -F 'Unexpected ACI usage fields; refusing to guess.' <<<"$aci_output" >/dev/null
-grep -F '"UnexpectedQuota"' <<<"$aci_output" >/dev/null
+[[ "$aci_missing_standard_cores_status" -ne 0 ]]
+grep -F 'Unexpected ACI usage fields; refusing to guess.' <<<"$aci_missing_standard_cores_output" >/dev/null
+grep -F '"ContainerGroups"' <<<"$aci_missing_standard_cores_output" >/dev/null
+[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+
+set_valid_defaults
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":11,"limit":20}]}'
+set +e
+aci_duplicate_standard_cores_output="$(run_preflight 2>&1)"
+aci_duplicate_standard_cores_status=$?
+set -e
+[[ "$aci_duplicate_standard_cores_status" -ne 0 ]]
+grep -F 'Unexpected ACI usage fields; refusing to guess.' <<<"$aci_duplicate_standard_cores_output" >/dev/null
+grep -F '"StandardCores"' <<<"$aci_duplicate_standard_cores_output" >/dev/null
+[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+
+set_valid_defaults
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20},{"name":{"value":"","localizedValue":"Broken quota row"},"currentValue":0,"limit":10}]}'
+set +e
+aci_empty_name_output="$(run_preflight 2>&1)"
+aci_empty_name_status=$?
+set -e
+[[ "$aci_empty_name_status" -ne 0 ]]
+grep -F 'Unexpected ACI usage response shape; refusing to guess.' <<<"$aci_empty_name_output" >/dev/null
+grep -F '"Broken quota row"' <<<"$aci_empty_name_output" >/dev/null
+[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+
+set_valid_defaults
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20},{"currentValue":0,"limit":10}]}'
+set +e
+aci_malformed_item_output="$(run_preflight 2>&1)"
+aci_malformed_item_status=$?
+set -e
+[[ "$aci_malformed_item_status" -ne 0 ]]
+grep -F 'Unexpected ACI usage response shape; refusing to guess.' <<<"$aci_malformed_item_output" >/dev/null
+grep -F '"currentValue": 0' <<<"$aci_malformed_item_output" >/dev/null
+[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+
+set_valid_defaults
+AZ_ACI_USAGE_MODE='error'
+AZ_ACI_USAGE_ERROR='simulated az rest failure from test'
+AZ_ACI_USAGE_STATUS='7'
+set +e
+aci_rest_error_output="$(run_preflight 2>&1)"
+aci_rest_error_status=$?
+set -e
+[[ "$aci_rest_error_status" -ne 0 ]]
+grep -F 'failed to query ACI usage via Azure REST API: simulated az rest failure from test' <<<"$aci_rest_error_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]

@@ -181,6 +181,8 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 
 ACI quota 증적이 필요하면 preflight와 같은 REST 경로를 직접 조회합니다. `az container list-usage` 는 현재 Azure CLI에 없으므로 사용하지 않습니다.
 현재 API 응답은 `ContainerGroups` 를 노출할 수 있고, 과거 응답은 `StandardContainerGroups` 를 노출할 수 있습니다. In other words, the current API may expose `ContainerGroups`, and historical responses may expose `StandardContainerGroups`. No guessing beyond these two container group quota names is allowed.
+Other ACI quota rows are informational only. Live Korea Central responses can also include `StandardSpotCores`, `StandardK80Cores`, `StandardP100Cores`, `StandardV100Cores`, `DedicatedContainerGroups`, `DedicatedCores`, `ConfidentialContainerGroups`, and `ConfidentialCores`, but preflight gates only on exactly one container group alias plus exactly one `StandardCores` row. That means unrelated rows must not block the workshop by themselves.
+워크숍 피크는 5 warm standby instances while 5 benchmark Pods are active or refilling 상황까지 포함하므로, preflight는 need at least 10 available container groups and 10 available StandardCores 기준으로만 통과시킵니다. 이 10 headroom은 standby refill 중에도 다음 benchmark batch를 막지 않기 위한 최소 안전선입니다.
 
 ```bash
 SUB_ID="$(az account show --query id -o tsv)"

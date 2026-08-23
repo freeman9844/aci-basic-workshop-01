@@ -10,8 +10,8 @@ MIN_AZ_VERSION="2.75.0"
 MIN_KUBECTL_VERSION="1.30.0"
 REQUIRED_HELM_MAJOR="3"
 REQUIRED_VM_VCPU_HEADROOM="8"
-REQUIRED_ACI_GROUP_HEADROOM="5"
-REQUIRED_ACI_CORE_HEADROOM="5"
+REQUIRED_ACI_GROUP_HEADROOM="10"
+REQUIRED_ACI_CORE_HEADROOM="10"
 VN2_CHART_VERSION="1.3410.26081102"
 BENCHMARK_IMAGE="mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
 
@@ -259,51 +259,49 @@ if [[ "$aci_usage_status" -ne 0 ]]; then
   die "failed to query ACI usage via Azure REST API: $aci_usage_response"
 fi
 
-if ! jq -e 'type == "object" and ((.value // null) | type == "array")' >/dev/null 2>&1 <<<"$aci_usage_response"; then
+if ! jq -e '
+  type == "object"
+  and ((.value // null) | type == "array")
+  and ([.value[]? | (
+    type == "object"
+    and ((.name? | type) == "object")
+    and ((.name.value? | type) == "string")
+    and (((.name.value? // "") | length) > 0)
+    and ((.currentValue? | type) == "number")
+    and ((.limit? | type) == "number")
+  )] | all)
+' >/dev/null 2>&1 <<<"$aci_usage_response"; then
   printf 'ERROR: Unexpected ACI usage response shape; refusing to guess.\n' >&2
   print_json_or_raw "$aci_usage_response"
   exit 1
 fi
 
 aci_usage_json="$(jq -c '.value' <<<"$aci_usage_response")"
-aci_usage_name_counts_json="$(jq -c '
-  reduce .[] as $item ({};
-    .[(($item.name.value // ""))] = ((.[($item.name.value // "")] // 0) + 1)
-  )
+aci_relevant_usage_json="$(jq -c '
+  {
+    group_alias_matches: [
+      .[]
+      | select(
+          (.name.value // "") == "ContainerGroups"
+          or (.name.value // "") == "StandardContainerGroups"
+        )
+    ],
+    standard_core_matches: [
+      .[]
+      | select((.name.value // "") == "StandardCores")
+    ]
+  }
 ' <<<"$aci_usage_json")"
-aci_usage_names_are_strict="$(jq_string "$aci_usage_name_counts_json" '
-  ([to_entries[].value == 1] | all)
-  and has("StandardCores")
-  and (([has("ContainerGroups"), has("StandardContainerGroups")] | map(select(.)) | length) == 1)
-  and ((to_entries | length) == 2)
-' 'ACI usage fields')"
-if [[ "$aci_usage_names_are_strict" != "true" ]]; then
+aci_group_alias_match_count="$(jq_string "$aci_relevant_usage_json" '.group_alias_matches | length' 'ACI container groups usage matches')"
+aci_standard_core_match_count="$(jq_string "$aci_relevant_usage_json" '.standard_core_matches | length' 'ACI StandardCores usage matches')"
+if [[ "$aci_group_alias_match_count" -ne 1 || "$aci_standard_core_match_count" -ne 1 ]]; then
   printf 'ERROR: Unexpected ACI usage fields; refusing to guess.\n' >&2
   print_json_or_raw "$aci_usage_response"
   exit 1
 fi
 
-aci_group_usage_name="$(jq_string "$aci_usage_name_counts_json" '
-  if has("ContainerGroups") then
-    "ContainerGroups"
-  else
-    "StandardContainerGroups"
-  end
-' 'ACI container groups usage name')"
-aci_group_available="$(jq_string "$aci_usage_json" "
-  [
-    .[]
-    | select((.name.value // \"\") == \"$aci_group_usage_name\")
-    | (.limit - .currentValue)
-  ][0]
-" 'ACI container groups usage')"
-aci_core_available="$(jq_string "$aci_usage_json" '
-  [
-    .[]
-    | select((.name.value // "") == "StandardCores")
-    | (.limit - .currentValue)
-  ][0]
-' 'ACI StandardCores usage')"
+aci_group_available="$(jq_string "$aci_relevant_usage_json" '.group_alias_matches[0] | (.limit - .currentValue)' 'ACI container groups usage')"
+aci_core_available="$(jq_string "$aci_relevant_usage_json" '.standard_core_matches[0] | (.limit - .currentValue)' 'ACI StandardCores usage')"
 
 if [[ "$aci_group_available" -lt "$REQUIRED_ACI_GROUP_HEADROOM" ]]; then
   die "ACI container groups headroom is $aci_group_available; need at least $REQUIRED_ACI_GROUP_HEADROOM"

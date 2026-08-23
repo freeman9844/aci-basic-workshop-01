@@ -26,6 +26,7 @@ required_strings = [
     "WORKSHOP_STATE=\"results/workshop.env\"",
     "if [[ ! -f \"$WORKSHOP_STATE\" ]]; then",
     "source \"$WORKSHOP_STATE\"",
+    "az aks get-credentials --resource-group \"$RG\" --name \"$AKS\" --overwrite-existing",
     ": \"${AKS_IDENTITY:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
     ": \"${AKS_IDENTITY_ID:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
     ": \"${NAP_VM_SIZE:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
@@ -149,6 +150,17 @@ for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", 
 
 if "다음 모듈에서 그대로 재사용" not in text:
     raise SystemExit("docs/03-install-dual-vn2.md must say STANDBY_POOL continues into the next module")
+
+recovery_sequence = "\n".join(
+    [
+        'source "$WORKSHOP_STATE"',
+        'az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing',
+    ]
+)
+if recovery_sequence not in text:
+    raise SystemExit(
+        "docs/03-install-dual-vn2.md must restore kubeconfig immediately after loading workshop state"
+    )
 
 step2_match = re.search(
     r"### 2\) VN2 chart 저장소 추가와 pinned release 값 선언\n\n```bash\n(.*?)```",

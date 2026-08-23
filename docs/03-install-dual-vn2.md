@@ -72,6 +72,7 @@ if [[ ! -f "$WORKSHOP_STATE" ]]; then
   exit 1
 fi
 source "$WORKSHOP_STATE"
+az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
 
 ( set -euo pipefail
   : "${RG:?Run Module 02 first or recover results/workshop.env before continuing.}"

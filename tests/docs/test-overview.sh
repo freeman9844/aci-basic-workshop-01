@@ -151,9 +151,19 @@ if "중간에 shell/session을 바꾸지 않았다." in readme_text:
 for required in (
     "results/workshop.env is the authoritative workshop state",
     "source results/workshop.env",
+    'az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing',
     "fresh Cloud Shell recovery",
 ):
     if required not in readme_text:
         raise SystemExit(f"README is missing workshop state guidance: {required}")
+
+readme_recovery_sequence = "\n".join(
+    [
+        "source results/workshop.env",
+        'az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing',
+    ]
+)
+if readme_recovery_sequence not in readme_text:
+    raise SystemExit("README fresh-shell recovery must restore kubeconfig immediately after loading workshop state")
 
 PY

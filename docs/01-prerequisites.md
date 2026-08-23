@@ -98,7 +98,7 @@ cd ~/aci-vn2-performance-workshop
   fi
 
   for ROLE in \
-    "Azure Container Instances Contributor" \
+    "Azure Container Instances Contributor Role" \
     "Standby Container Group Pool Contributor" \
     "Network Contributor"; do
     az role assignment create \
@@ -115,9 +115,11 @@ cd ~/aci-vn2-performance-workshop
 )
 ```
 
+Azure CLI는 built-in role 표시 이름을 부분 추정하지 않으므로 `Azure Container Instances Contributor Role` 처럼 현재 role definition의 정확한 이름을 그대로 써야 합니다.
+
 필수 역할은 다음 세 가지입니다.
 
-- `Azure Container Instances Contributor`
+- `Azure Container Instances Contributor Role`
 - `Standby Container Group Pool Contributor`
 - `Network Contributor`
 
@@ -176,7 +178,7 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 | `Microsoft.StandbyPool must be Registered` | provider 등록 상태 | `az provider show --namespace Microsoft.StandbyPool --query registrationState -o tsv` | `az provider register --namespace Microsoft.StandbyPool --wait` 후 다시 실행 |
 | `ResourceNotFound` 가 feature show 에서 반환됨 | GA 전환 여부 | `grep -i ResourceNotFound results/standby-feature-show.stderr.log` | 오류가 아니라면 provider Registered 만 확인하고 계속 진행 |
 | `Standby Pool Resource Provider service principal was not found.` | Entra 조회 결과 | `az ad sp list --display-name 'Standby Pool Resource Provider' --output table` | display name 오타 여부 확인, 필요 시 관리자와 구독 상태 확인 |
-| role assignment create 가 실패함 | 현재 사용자 권한 | `az role assignment list --assignee "$(az account show --query user.name -o tsv)" --scope "/subscriptions/$(az account show --query id -o tsv)" --include-inherited --output table` | 전용 교육용 구독 Owner 로 다시 로그인 |
+| `Role 'Azure Container Instances Contributor' doesn't exist` 또는 role assignment create 가 실패함 | exact role definition name, 현재 사용자 권한 | `az role definition list --name 'Azure Container Instances Contributor Role' --output table` | `Azure Container Instances Contributor Role` 로 다시 실행하고, 그래도 실패하면 전용 교육용 구독 Owner 로 다시 로그인 |
 | preflight가 quota 또는 SKU 부족으로 실패함 | Korea Central 가용량 | `./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5` | quota 증설 또는 구독 교체 후 다시 시작 |
 
 ACI quota 증적이 필요하면 preflight와 같은 REST 경로를 직접 조회합니다. `az container list-usage` 는 현재 Azure CLI에 없으므로 사용하지 않습니다.

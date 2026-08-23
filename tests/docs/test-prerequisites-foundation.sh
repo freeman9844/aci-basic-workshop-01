@@ -25,7 +25,7 @@ required_prereq = [
     "ResourceNotFound",
     "The preview feature is no longer exposed; provider registration is the current GA gate.",
     "Standby Pool Resource Provider",
-    "Azure Container Instances Contributor",
+    "Azure Container Instances Contributor Role",
     "Standby Container Group Pool Contributor",
     "Network Contributor",
     "FEATURE_JSON=\"$(az feature show",
@@ -134,6 +134,15 @@ for path, text in ((prereq, prereq_text), (foundation, foundation_text)):
 
 if "다음 모듈로 진행하지 말고" not in prereq_text:
     raise SystemExit("docs/01-prerequisites.md must tell participants not to continue on failed preflight")
+
+for forbidden_prereq in (
+    '"Azure Container Instances Contributor"',
+    "`Azure Container Instances Contributor`",
+):
+    if forbidden_prereq in prereq_text:
+        raise SystemExit(
+            "docs/01-prerequisites.md must not use the stale no-suffix Azure Container Instances role name"
+        )
 
 if "kubelet identity" not in foundation_text:
     raise SystemExit("docs/02-azure-foundation.md must explain kubelet identity grants")

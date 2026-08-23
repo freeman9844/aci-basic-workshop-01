@@ -309,6 +309,21 @@ run_tolerant "delete namespace benchmark" \
   "$KUBECTL_BIN" delete namespace benchmark --ignore-not-found=true --wait=false
 run_tolerant "delete namespace vn2-image-cache" \
   "$KUBECTL_BIN" delete namespace vn2-image-cache --ignore-not-found=true --wait=false
+run_tolerant "delete NodePool workshop-nap" \
+  "$KUBECTL_BIN" delete nodepool workshop-nap --ignore-not-found=true
+run_tolerant "delete AKSNodeClass workshop-nap" \
+  "$KUBECTL_BIN" delete aksnodeclass workshop-nap --ignore-not-found=true
+
+set +e
+nodeclaim_output="$("$KUBECTL_BIN" get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name 2>&1)"
+nodeclaim_status=$?
+set -e
+if [[ "$nodeclaim_status" -ne 0 ]]; then
+  operation_failures+=("observe NodeClaim 0 for workshop-nap: ${nodeclaim_output:-command failed}")
+elif [[ -n "$nodeclaim_output" ]]; then
+  operation_failures+=("observe NodeClaim 0 for workshop-nap: remaining NodeClaims: $nodeclaim_output")
+fi
+
 run_tolerant "uninstall Helm release $standby_release" \
   "$HELM_BIN" uninstall "$standby_release" --namespace "$standby_namespace" --ignore-not-found
 run_tolerant "uninstall Helm release $ondemand_release" \

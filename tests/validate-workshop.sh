@@ -161,18 +161,18 @@ for line in readme_text.splitlines():
 
 expected_readme_durations = {
     "00": 5,
-    "01": 15,
-    "02": 30,
+    "01": 20,
+    "02": 35,
     "03": 20,
-    "04": 25,
-    "05": 25,
-    "06": 20,
+    "04": 45,
+    "05": 30,
+    "06": 15,
     "07": 10,
 }
 if module_rows != expected_readme_durations:
     raise SystemExit(f"README module duration table mismatch: {module_rows}")
-if sum(module_rows.values()) != 150:
-    raise SystemExit(f"README module duration total must be 150, found {sum(module_rows.values())}")
+if sum(module_rows.values()) != 180:
+    raise SystemExit(f"README module duration total must be 180, found {sum(module_rows.values())}")
 
 required_readme_fragments = [
     "[Module 07](docs/07-limitations-troubleshooting-cleanup.md)의 cleanup 절차",
@@ -182,6 +182,7 @@ required_readme_fragments = [
     "two VN2 virtual nodes show Ready concurrently",
     "Standby Pool running count is 5",
     "exactly 12 raw JSON files",
+    "60 Pod",
     "results/summary.json, results/summary.csv, and results/summary.md",
     "No timeout/failure samples are hidden",
     'az group exists --name "$RG"',
@@ -190,6 +191,14 @@ required_readme_fragments = [
 for fragment in required_readme_fragments:
     if fragment not in readme_text:
         raise SystemExit(f"README is missing required operator/cleanup text: {fragment}")
+
+for stale_path in (
+    root / "docs/reference/korea-central-2026-08-23.md",
+    root / "docs/reference/korea-central-2026-08-23.json",
+    root / "tests/test_rehearsal_reference.py",
+):
+    if stale_path.exists():
+        raise SystemExit(f"Obsolete warm-AKS reference artifact must be removed: {stale_path.relative_to(root)}")
 
 for module, path in module_paths.items():
     text = path.read_text(encoding="utf-8")

@@ -57,8 +57,15 @@ required_06 = [
     "evidence_json",
     ".evidence.runs[]",
     "non_ready_pods",
+    "aks-nap",
     "vn2-ondemand",
+    "vn2-standby",
+    "vn2-standby-cached",
+    "12개 raw JSON",
+    "60개 Pod",
+    "네 행",
     "speed-up",
+    "OnDemand median / candidate median",
     "median 은 `ready_samples` 기준으로 계산합니다",
     "all-success 시나리오에서는 `ready_samples=15`",
     "`pod_speedup_ratio` 는 `create_to_ready_ms` median 기준",
@@ -68,10 +75,9 @@ required_06 = [
     "시나리오 aggregate",
     "SLA가 아닙니다",
     "제품 전체 성능 보장이 아닙니다",
-    "regular AKS",
-    "warm image cache",
-    "burst 비용 비교가 아닙니다",
     "실패/timeout sample을 숨기지 않습니다",
+    "새 NAP 기반 live rehearsal",
+    "현재 reference 성능 수치가 없습니다",
 ]
 
 for item in required_06:
@@ -84,6 +90,11 @@ summary_contract_pattern = re.compile(
 )
 if not summary_contract_pattern.search(text06):
     raise SystemExit("docs/06-analyze-results.md is missing the exact summary.json aggregate inspection command")
+
+for scenario in ("aks-nap", "vn2-standby", "vn2-standby-cached"):
+    command = f"jq '.[\"{scenario}\"]'"
+    if command not in text06:
+        raise SystemExit(f"docs/06-analyze-results.md is missing the example command: {command}")
 
 evidence_pattern = re.compile(
     r"jq '\.\[\"vn2-standby-cached\"\]\.evidence\.runs\[\] \| \{run, metadata, batch, non_ready_pods\}' results/summary\.json",
@@ -147,6 +158,24 @@ required_07 = [
     "printf 'export RG=%q\\n' \"$RG\"",
     "두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline",
     "Standard_D16s_v5",
+    "kubectl get nodepool workshop-nap -o yaml",
+    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o yaml",
+    "kubectl get events -A --field-selector source=karpenter-events",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
+    "NodePool Ready",
+    "health가 `missing`",
+    "health가 `degraded`",
+    "health가 `timeout`",
+    "`nodes`와 `nodeclaims`가 `null`",
+    "consolidation 시간은 run reset",
+    "Pod Ready latency에는 포함되지 않습니다",
+    "Standard_D4s_v5",
+    "자동 SKU 선택",
+    "통제된 lab 조건",
+    "region, SKU, capacity",
+    "NodeClaim 0",
 ]
 
 for item in required_07:
@@ -171,6 +200,15 @@ for forbidden in ("$WORKSHOP_RG", "STANDBY_POOL_NAME"):
 
 if "Cloud Shell 세션이 살아 있어" in text07:
     raise SystemExit("docs/07-limitations-troubleshooting-cleanup.md must not require the original Cloud Shell session")
+
+for forbidden in (
+    "vn2-standby-uncached",
+    "regular AKS",
+    "warm fixed AKS",
+    "korea-central-2026-08-23",
+):
+    if forbidden in text06:
+        raise SystemExit(f"docs/06-analyze-results.md must not contain stale warm-AKS text: {forbidden}")
 
 if "- 이전: [Module 05](./05-standby-cache-benchmark.md)" not in text06:
     raise SystemExit("docs/06-analyze-results.md must link back to Module 05")

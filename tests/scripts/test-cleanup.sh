@@ -21,7 +21,10 @@ case "${KUBECTL_MODE:-success}" in
   success)
     case "$*" in
       "delete namespace benchmark --ignore-not-found=true --wait=false"|\
-      "delete namespace vn2-image-cache --ignore-not-found=true --wait=false")
+      "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
+      "delete nodepool workshop-nap --ignore-not-found=true"|\
+      "delete aksnodeclass workshop-nap --ignore-not-found=true"|\
+      "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
         exit 0
         ;;
     esac
@@ -199,6 +202,9 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
@@ -227,6 +233,7 @@ set -e
 [[ "$cluster_unreachable_status" -eq 0 ]]
 grep -F 'WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.' <<<"$cluster_unreachable_output" >/dev/null
 grep -F 'delete namespace benchmark: The connection to the server localhost:6443 was refused' <<<"$cluster_unreachable_output" >/dev/null
+grep -F 'delete NodePool workshop-nap: The connection to the server localhost:6443 was refused' <<<"$cluster_unreachable_output" >/dev/null
 grep -F 'uninstall Helm release vn2-standby: Kubernetes cluster unreachable' <<<"$cluster_unreachable_output" >/dev/null
 grep -F 'Cleanup completed with warnings.' <<<"$cluster_unreachable_output" >/dev/null
 python3 - "$TMP/logs/commands.log" <<'PY'
@@ -239,6 +246,9 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
@@ -276,6 +286,9 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
@@ -410,6 +423,9 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
@@ -449,6 +465,9 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",

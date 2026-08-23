@@ -29,6 +29,10 @@
 | Kubernetes network policy | 이 워크숍은 Kubernetes network policy 검증을 포함하지 않습니다 |
 | private ACR/private endpoint | public MCR 기준 benchmark 이므로 private registry 네트워크 설계는 범위 제외입니다 |
 | multi-region / production recommendation | 한 번의 워크숍 측정으로 운영 capacity recommendation 을 내리지 않습니다 |
+| NAP SKU 선택 | `Standard_D4s_v5`를 고정하므로 NAP의 자동 SKU 선택 품질이나 최적화를 비교하지 않습니다 |
+| NAP consolidation | consolidation 시간은 run reset에 포함되지만 Pod Ready latency에는 포함되지 않습니다 |
+| Image Cache | production 기본값이 아니라 cache 효과를 분리하는 통제된 lab 조건입니다 |
+| Azure 변동성 | region, SKU, capacity와 시점에 따라 provisioning 결과와 latency가 달라질 수 있습니다 |
 
 ### 2) 안전한 cleanup 명령 실행
 
@@ -61,7 +65,15 @@ scripts/cleanup.sh --resource-group "$RG" --yes
 az group exists --name "$RG"
 ```
 
-`cleanup.sh` 는 먼저 subscription ID 와 resource group 존재 여부를 확인하고, RG 가 이미 없으면 조기에 종료합니다. RG 가 존재하면 `az standby-container-group-pool list --resource-group "$RG" --query '[].name' --output tsv` 로 현재 RG 안의 standby pool 이름만 읽고, `benchmark` namespace, `vn2-image-cache` namespace, `vn2-standby` / `vn2-ondemand` Helm release, 그 RG 안의 standby pool, 마지막으로 RG 자체를 삭제합니다.
+`cleanup.sh`는 먼저 subscription ID와 resource group 존재 여부를 확인하고, RG가 이미 없으면 조기에 종료합니다. RG가 존재하면 `az standby-container-group-pool list --resource-group "$RG" --query '[].name' --output tsv`로 현재 RG 안의 standby pool 이름만 읽습니다. graceful cluster cleanup은 benchmark Pod가 든 `benchmark` namespace와 `vn2-image-cache` namespace를 먼저 삭제하고, 아래 순서로 NAP 리소스 삭제와 NodeClaim 0 관찰을 시도한 뒤 Helm release를 제거합니다.
+
+```bash
+kubectl delete nodepool workshop-nap --ignore-not-found=true
+kubectl delete aksnodeclass workshop-nap --ignore-not-found=true
+kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name
+```
+
+마지막 명령의 빈 출력이 NodeClaim 0 evidence입니다. NodeClaim이 남아 있거나 cluster가 unreachable이면 경고를 남기되, `vn2-standby` / `vn2-ondemand` Helm release, 그 RG 안의 standby pool, 마지막으로 RG 자체 삭제를 계속합니다.
 
 fresh Cloud Shell session, authorized IP drift, 또는 missing kubeconfig 때문에 `kubectl`/`helm` 이 cluster unreachable warning 을 내더라도 billing-critical RG deletion 은 계속 진행되어야 합니다. 이 경우 `WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.` 또는 `Cleanup completed with warnings.` 같은 경고는 정상적인 evidence 이며, 숨기지 말고 CLI 출력 그대로 보존하십시오.
 
@@ -105,6 +117,7 @@ source "$WORKSHOP_STATE"
 
 | 증상 | 실제 증거 | 확인 명령 | 조치 |
 | --- | --- | --- | --- |
+| NAP node가 생성되지 않거나 reset되지 않는다 | checker JSON에서 NodePool Ready일 때 `health=ready`입니다. NodePool 조회 실패는 health가 `missing`, Ready condition 실패는 health가 `degraded`, deadline 초과는 health가 `timeout`입니다. timeout 합성 evidence에서는 아직 관찰하지 못한 `nodes`와 `nodeclaims`가 `null`이므로 0으로 간주하면 안 됩니다 | `kubectl get nodepool workshop-nap -o yaml`, `kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o yaml`, `kubectl get events -A --field-selector source=karpenter-events` | NodePool condition, NodeClaim provisioning/consolidation event, quota와 `Standard_D4s_v5` capacity를 확인합니다. run 전후 NodeClaim 0이 확인되지 않으면 다음 run을 시작하지 않습니다 |
 | VN2 node 가 `NotReady` 이다 | virtual node 자체보다 먼저 infrastructure Pod/cluster event 를 봐야 한다 | `kubectl get nodes -L benchmark-path -o wide`, `kubectl get pods -A -o wide`, `kubectl get events -A --sort-by=.metadata.creationTimestamp \| tail -n 40` | 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline 을 함께 수용하는 `Standard_D16s_v5` 기준 capacity, kubelet/Standby Pool RBAC, subnet 설정을 확인한 뒤 `NotReady` 원인을 먼저 제거한다 |
 | standby pool 이 degraded 로 보인다 | Azure CLI 원본은 `status.code` 에 `HealthState/Degraded` 같은 값을 주고, checker 출력은 `{"health":"degraded"}` 로 정규화한다 | `./scripts/check-standby-pool.sh -g "$RG" -n "$STANDBY_POOL" --expect-running 5 --timeout-seconds 1200 --interval-seconds 15`, `az standby-container-group-pool status --resource-group "$RG" --name "$STANDBY_POOL" --version latest --output json` | degraded 를 숨기지 말고 RBAC, delegated subnet, quota, region 상태를 먼저 확인한다 |
 | running count 가 5 아래로 떨어진다 | healthy 여도 `running` 이 4 이하이면 warm capacity 가 아직 덜 찬 것이다 | `./scripts/check-standby-pool.sh -g "$RG" -n "$STANDBY_POOL" --expect-running 5 --timeout-seconds 1200 --interval-seconds 15`, `az standby-container-group-pool status --resource-group "$RG" --name "$STANDBY_POOL" --version latest --output json` | running 5 가 될 때까지 기다리거나 quota/capacity 이슈를 해결한 뒤 다음 run 으로 간다 |
@@ -123,6 +136,7 @@ source "$WORKSHOP_STATE"
 
 - API server authorized IP ranges, Windows, IPv6, DaemonSet, Kubernetes network policy 등 hard limitations 를 팀에 설명할 수 있다.
 - troubleshooting 표의 각 행에 대해 실제 evidence 파일 또는 CLI 명령을 다시 실행할 수 있다.
+- NAP checker의 ready/missing/degraded/timeout 상태와 unknown `null` count를 구분하고 NodeClaim 0을 확인할 수 있다.
 - `results/workshop.env` 를 source 하는 정상 경로와 missing state file 때의 fresh Cloud Shell recovery 경로를 모두 설명할 수 있다.
 - `scripts/cleanup.sh --resource-group "$RG" --yes` 를 실행했다.
 - `az group exists --name "$RG"` 결과가 최종적으로 `false` 다.

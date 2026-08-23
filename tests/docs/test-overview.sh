@@ -28,9 +28,11 @@ readme_text = readme.read_text(encoding="utf-8")
 required_readme_strings = [
     "git clone",
     "~/aci-vn2-performance-workshop",
-    "150분",
+    "180분",
     "Korea Central",
     "5개 Pod × 3회",
+    "12 raw JSON",
+    "60 Pod",
     "AKS NAP",
     "VN2 OnDemand",
     "StandbyPool",
@@ -58,9 +60,9 @@ required_readme_strings = [
     "Mandatory cleanup",
     "results/workshop.env",
     "fresh Cloud Shell recovery",
-    "Task 11의 새 NAP live rehearsal reference",
-    "기존 수치와 reference 문서는 **obsolete**",
-    "현재 기대값이나 SLA로 사용하지 마십시오",
+    "새 NAP 기반 live rehearsal",
+    "구현 workflow의 후속 단계",
+    "실제 측정값이 게시되기 전에는 현재 reference 성능 수치가 없습니다",
 ]
 for required in required_readme_strings:
     if required not in readme_text:
@@ -77,6 +79,8 @@ for stale_reference in (
     "Pod median 9.796배",
     "Batch all-ready median 7.062배",
     "[Korea Central 실제 리허설 참고 결과](docs/reference/korea-central-2026-08-23.md)",
+    "docs/reference/korea-central-2026-08-23.json",
+    "Task 11의 새 NAP live rehearsal reference",
 ):
     if stale_reference in readme_text:
         raise SystemExit(f"README must not present the obsolete warm-AKS reference as current: {stale_reference}")
@@ -89,26 +93,26 @@ for line in readme_text.splitlines():
 
 expected_readme_durations = {
     "00": 5,
-    "01": 15,
-    "02": 30,
+    "01": 20,
+    "02": 35,
     "03": 20,
-    "04": 25,
-    "05": 25,
-    "06": 20,
+    "04": 45,
+    "05": 30,
+    "06": 15,
     "07": 10,
 }
 if module_rows != expected_readme_durations:
     raise SystemExit(f"README module duration table mismatch: {module_rows}")
-if sum(module_rows.values()) != 150:
-    raise SystemExit(f"README module duration total must be 150, found {sum(module_rows.values())}")
+if sum(module_rows.values()) != 180:
+    raise SystemExit(f"README module duration total must be 180, found {sum(module_rows.values())}")
 
 expected_doc_durations = {
     "01": 15,
     "02": 30,
     "03": 20,
-    "04": 25,
-    "05": 25,
-    "06": 20,
+    "04": 45,
+    "05": 30,
+    "06": 15,
     "07": 10,
 }
 expected_navigation = {
@@ -147,6 +151,14 @@ for module, path in module_files.items():
 
 if "중간에 shell/session을 바꾸지 않았다." in readme_text:
     raise SystemExit("README must not require a single uninterrupted shell session anymore")
+
+for stale_path in (
+    root / "docs/reference/korea-central-2026-08-23.md",
+    root / "docs/reference/korea-central-2026-08-23.json",
+    root / "tests/test_rehearsal_reference.py",
+):
+    if stale_path.exists():
+        raise SystemExit(f"Obsolete warm-AKS reference artifact must be removed: {stale_path.relative_to(root)}")
 
 for required in (
     "results/workshop.env is the authoritative workshop state",

@@ -1,18 +1,18 @@
-# Module 06. 결과 분석과 해석
+# Module 06. 네 시나리오 결과 분석과 해석
 
 ## 목표
 
-`results/raw/` 의 raw JSON을 실제 summary schema로 다시 묶어 `results/summary.json`, `results/summary.csv`, `results/summary.md` 를 만들고, 개별 run 과 시나리오 aggregate 를 분리해서 해석합니다.
+`results/raw/`의 12개 raw JSON을 네 행의 summary schema로 묶어 `results/summary.json`, `results/summary.csv`, `results/summary.md`를 만들고, all-success 기준 60개 Pod의 개별 run과 시나리오 aggregate를 분리해 해석합니다.
 
 ## 예상 소요 시간
 
-20분
+15분
 
 ## 시작 전 상태
 
 - Module 04와 Module 05에서 네 시나리오의 raw JSON이 모두 생성되었다.
 - `results/raw/` 와 `results/diagnostics/` 아래의 실패/timeout/fallback evidence를 지우지 않았다.
-- `vn2-ondemand`, `vn2-standby-uncached`, `vn2-standby-cached`, `aks` run 파일 이름이 고정 규칙을 따른다.
+- `aks-nap`, `vn2-ondemand`, `vn2-standby`, `vn2-standby-cached` run 파일 이름이 고정 규칙을 따른다.
 
 ## 진행 순서
 
@@ -37,10 +37,13 @@ Successfully generated results/summary.json, results/summary.csv, and results/su
 
 ### 2) 시나리오 aggregate 해석
 
-`summary.json` 의 top-level 은 시나리오별 aggregate 입니다. 아래 명령은 실제 키 이름으로 aggregate 를 읽는 가장 짧은 방법입니다.
+`summary.json`의 top-level은 다음 순서의 네 행입니다: `aks-nap`, `vn2-ondemand`, `vn2-standby`, `vn2-standby-cached`. 아래 명령은 OnDemand 기준선과 세 candidate aggregate를 실제 키 이름으로 확인합니다.
 
 ```bash
-jq '."vn2-standby-cached"' results/summary.json
+jq '.["aks-nap"]' results/summary.json
+jq '.["vn2-ondemand"]' results/summary.json
+jq '.["vn2-standby"]' results/summary.json
+jq '.["vn2-standby-cached"]' results/summary.json
 jq '.["vn2-standby-cached"] | {scenario, runs_count, ready_samples, failed_count, timeout_count, create_to_ready_ms, create_to_scheduled_ms, scheduled_to_ready_ms, batch_first_ready_ms, batch_all_ready_ms, pod_speedup_ratio, batch_speedup_ratio}' results/summary.json
 ```
 
@@ -53,6 +56,8 @@ jq '.["vn2-standby-cached"] | {scenario, runs_count, ready_samples, failed_count
 - `ready_samples`, `failed_count`, `timeout_count` 는 성공 표본과 비성공 표본을 분리해 보여 주므로 failed/timeout sample을 aggregate 밖으로 숨기지 않습니다. median 은 `ready_samples` 기준으로 계산합니다.
 - `pod_speedup_ratio` 는 `create_to_ready_ms` median 기준 `vn2-ondemand` 대비 speed-up 입니다.
 - `batch_speedup_ratio` 는 `batch_all_ready_ms` median 기준 `vn2-ondemand` 대비 speed-up 입니다. first-ready 기준이 아닙니다.
+
+상대비 공식은 **OnDemand median / candidate median**입니다. 1보다 크면 candidate가 OnDemand보다 빠르고, 1보다 작으면 느립니다. `aks-nap`, `vn2-standby`, `vn2-standby-cached` 모두 같은 `vn2-ondemand` median을 기준으로 읽습니다. 이 비율은 서로 다른 compute lifecycle을 단순화한 기술 통계이므로 절대 성능 보장으로 해석하지 않습니다.
 
 ### 3) 개별 run evidence 해석
 
@@ -90,35 +95,15 @@ scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p
 - nearest-rank p95 는 보간하지 않습니다. 샘플 수가 15개일 때도 nearest-rank p95 를 그대로 쓰며, interpolated percentile 로 다시 계산하지 않습니다.
 - `pod_speedup_ratio` 는 `create_to_ready_ms` median 기준, `batch_speedup_ratio` 는 `batch_all_ready_ms` median 기준입니다. `speed-up` 은 `vn2-ondemand` median 을 분모/분자로 비교한 상대값이지 절대 SLA가 아닙니다.
 - `failed_count`, `timeout_count` 가 0이 아니면 성공 Pod의 median 이 빨라도 같은 줄에서 함께 해석해야 합니다.
-- regular AKS 수치는 이미 프로비저닝된 VM 노드와 warm image cache 영향을 받습니다. regular AKS warm image cache 결과를 VN2 burst 비용 비교로 읽으면 안 되며, burst 비용 비교가 아닙니다.
-- 특히 regular AKS 는 노드가 계속 떠 있는 구조이므로 cache/cost 조건이 `vn2-ondemand` 또는 standby 경로와 다릅니다.
+- `aks-nap`은 미리 실행 중인 VM node가 아니라 node/NodeClaim 0에서 시작하는 VM scale-out 전체 경로입니다. VM allocation, bootstrap, node registration, image pull과 container start가 Pod Ready latency에 포함됩니다.
+- `vn2-ondemand`는 공통 median baseline입니다. NAP와 Standby 두 경로의 lifecycle과 비용 조건이 다르므로 비율만으로 운영 선택을 결정하지 않습니다.
+- NAP consolidation은 run 뒤 zero-capacity reset에 포함되지만 Pod Ready latency에는 포함되지 않습니다.
 
 > **주의:** 이 워크숍의 p95와 speed-up 은 기술 통계입니다. **SLA가 아닙니다.** 실패/timeout sample을 숨기지 않습니다. 더 빠른 한 번의 run 도 제품 전체 성능 보장이 아닙니다.
 
-### 6) 실제 리허설 결과와 비교
+### 6) live rehearsal 상태
 
-워크숍이 정상적으로 동작하는지 확인하기 위해 2026-08-23 Korea Central에서 전체 과정을 실제 실행했습니다. 당시 조건은 Kubernetes 1.34.9, `Standard_D16s_v5` 1대, Standby ready capacity 5, 시나리오당 5 Pods × 3회였습니다. 12개 run의 60개 Pod가 모두 Ready였고 실패와 timeout은 없었습니다.
-
-| 시나리오 | Pod create→ready Median | Batch all-ready Median | OnDemand 대비 Pod | OnDemand 대비 Batch |
-| --- | ---: | ---: | ---: | ---: |
-| AKS | 1,352.2 ms | 2,149.3 ms | - | - |
-| VN2 OnDemand | 53,850.8 ms | 57,067.7 ms | 기준 | 기준 |
-| Standby uncached | 6,942.5 ms | 20,141.3 ms | 7.757× | 2.833× |
-| Standby cached | 5,497.1 ms | 8,081.5 ms | 9.796× | 7.062× |
-
-이번 표본에서 Image Cache는 uncached 대비 Pod median을 1.263배, Batch all-ready median을 2.492배 개선했습니다. 다만 cached의 Batch first-ready median은 uncached보다 느렸으므로, 첫 Pod와 전체 burst 완료 지표를 분리해서 읽어야 합니다.
-
-상세 환경, p95, 운영상 발견 사항과 기계 판독 가능한 값은 다음 파일에서 확인합니다.
-
-```bash
-sed -n '1,220p' docs/reference/korea-central-2026-08-23.md
-jq '.' docs/reference/korea-central-2026-08-23.json
-```
-
-- [Korea Central 실제 리허설 참고 결과](./reference/korea-central-2026-08-23.md)
-- [기계 판독 가능한 리허설 결과 JSON](./reference/korea-central-2026-08-23.json)
-
-이 값은 참가자 결과가 같은 순서와 규모인지 점검하는 참고 자료입니다. Azure 지역 capacity, 시점, 이미지 상태, 네트워크와 구독 quota에 따라 달라질 수 있으며 기대 출력이나 SLA로 사용하지 않습니다.
+기존 warm AKS 리허설 값은 `aks-nap` 결과가 아니므로 제거했습니다. 새 NAP 기반 live rehearsal은 구현 workflow의 후속 단계에서 네 시나리오 12개 run을 실제 실행한 뒤 게시합니다. 그 전에는 현재 reference 성능 수치가 없습니다. 자신의 결과를 임의의 placeholder나 과거 수치와 맞추지 말고 raw evidence, 실패/timeout, Azure region/SKU/capacity 조건을 함께 기록하십시오.
 
 ## 완료 체크포인트
 
@@ -127,8 +112,8 @@ jq '.' docs/reference/korea-central-2026-08-23.json
 - `create->scheduled`, `scheduled->ready`, `create->ready`, batch first-ready, batch all-ready 를 실제 키 이름과 함께 설명할 수 있다.
 - `nearest-rank p95` 가 보간하지 않는 descriptive metric 임을 설명할 수 있다.
 - `failed_count`, `timeout_count`, `non_ready_pods` 를 숨기지 않고 개별 run evidence 와 함께 읽었다.
-- regular AKS warm image cache 결과를 standby/OnDemand burst 비용 판단과 섞지 않는다는 점을 설명할 수 있다.
-- 실제 리허설 참고값과 자신의 결과를 비교하되 SLA나 기대 출력으로 사용하지 않는다.
+- `aks-nap`, `vn2-standby`, `vn2-standby-cached`가 모두 VN2 OnDemand median baseline을 사용하는 이유를 설명할 수 있다.
+- 새 live reference가 게시되기 전에는 현재 reference 성능 수치가 없음을 설명할 수 있다.
 
 ## 문제 해결
 
@@ -136,7 +121,7 @@ jq '.' docs/reference/korea-central-2026-08-23.json
 | --- | --- | --- |
 | summary 파일이 생성되지 않는다 | `find results/raw -maxdepth 1 -type f -name '*.json' | sort`, `python3 scripts/summarize-results.py --input results/raw --output-dir results` | raw JSON 자체가 없는지 먼저 확인하고, 다시 실행해 `Successfully generated results/summary.json, results/summary.csv, and results/summary.md.` 출력이 나오는지 본다 |
 | aggregate 는 있는데 원인을 모르겠다 | `jq '.["vn2-standby-cached"] | {scenario, runs_count, ready_samples, failed_count, timeout_count, create_to_ready_ms, create_to_scheduled_ms, scheduled_to_ready_ms, batch_first_ready_ms, batch_all_ready_ms, pod_speedup_ratio, batch_speedup_ratio}' results/summary.json`, `jq '.["vn2-standby-cached"].evidence.runs[] | {run, metadata, batch, non_ready_pods}' results/summary.json` | aggregate 와 개별 run evidence 를 분리해서 본다. failure/timeout/fallback 을 aggregate 한 줄로 덮어쓰지 않는다 |
-| cached 가 더 빠르지 않아 해석이 애매하다 | `sed -n '1,220p' results/summary.md`, `python3 -m json.tool results/raw/vn2-standby-cached-run-1.json | sed -n '1,220p'`, `python3 -m json.tool results/raw/vn2-standby-uncached-run-1.json | sed -n '1,220p'` | 한 run 의 최저값이 아니라 시나리오 aggregate 와 raw evidence 를 같이 보고, timeout/failure/sample 편차를 그대로 유지한 채 설명한다 |
+| cached 가 더 빠르지 않아 해석이 애매하다 | `sed -n '1,220p' results/summary.md`, `python3 -m json.tool results/raw/vn2-standby-cached-run-1.json | sed -n '1,220p'`, `python3 -m json.tool results/raw/vn2-standby-run-1.json | sed -n '1,220p'` | 한 run 의 최저값이 아니라 시나리오 aggregate 와 raw evidence 를 같이 보고, timeout/failure/sample 편차를 그대로 유지한 채 설명한다 |
 
 ## 이전/다음
 

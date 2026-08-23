@@ -1,6 +1,6 @@
 # ACI VN2 성능 워크숍 개요
 
-이 저장소는 **Korea Central** 기준으로 **AKS NAP**, **VN2 OnDemand**, **StandbyPool**, **Image Cache** 조합을 같은 조건으로 측정하는 150분 실습 안내서입니다. 목표는 참가자가 `5개 Pod × 3회` 반복 측정을 통해 Pod 시작 지연과 batch 완료 시간을 직접 수집하고 해석하도록 돕는 것입니다.
+이 저장소는 **Korea Central** 기준으로 **AKS NAP**, **VN2 OnDemand**, **StandbyPool**, **Image Cache** 조합을 같은 조건으로 측정하는 180분 실습 안내서입니다. 네 시나리오에서 `5개 Pod × 3회`를 실행해 총 **12 raw JSON**과 all-success 기준 **60 Pod** 표본의 시작 지연 및 batch 완료 시간을 직접 수집하고 해석합니다.
 
 > [!WARNING]
 > 이 워크숍은 **전용 교육용 Azure 구독의 Owner 권한**을 전제로 합니다. 기존 production 구독이나 공유 AKS 클러스터에서 진행하지 마세요.
@@ -138,10 +138,9 @@ StandbyPool이 compute 준비 시간을 줄여도 새 capacity가 benchmark imag
 
 구현과 측정 절차는 [Module 03: 이중 VN2 설치와 standby pool 준비](docs/03-install-dual-vn2.md), [Module 05: StandbyPool과 Image Cache 측정](docs/05-standby-cache-benchmark.md), [Module 06: 결과 분석과 해석](docs/06-analyze-results.md)에서 이어집니다. 제품 개념은 Microsoft Learn의 [Virtual nodes on Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-virtual-nodes)와 [Standby pools for Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-standby-pool-overview)를 참고하세요.
 
-## 실제 리허설 참고 결과
+## Live rehearsal 상태
 
-> [!CAUTION]
-> 기존 2026-08-23 리허설은 이미 실행 중인 warm fixed AKS node를 측정했으므로 현재 `aks-nap` 아키텍처의 reference가 아닙니다. Task 11의 새 NAP live rehearsal reference가 게시될 때까지 기존 수치와 reference 문서는 **obsolete**이며 현재 기대값이나 SLA로 사용하지 마십시오.
+기존 warm AKS 측정값은 현재 `aks-nap` 아키텍처에 재사용하지 않습니다. 새 NAP 기반 live rehearsal은 구현 workflow의 후속 단계에서 네 시나리오를 실제로 실행한 뒤 게시합니다. 실제 측정값이 게시되기 전에는 현재 reference 성능 수치가 없습니다. 임의의 placeholder 값이나 이전 수치를 기대값 또는 SLA로 사용하지 마십시오.
 
 ## 사전 요구 사항
 
@@ -160,20 +159,21 @@ fixed system node 크기는 `Standard_D16s_v5`이고 두 VN2 infrastructure rele
 | Module | 주제 | 시간 | 결과 |
 | --- | --- | ---: | --- |
 | Module 00 | 개요와 측정 계약 | 5분 | 비교 기준, 지표, 비용, cleanup 원칙 이해 |
-| Module 01 | 사전 검사와 참가 조건 확인 | 15분 | 도구, 권한, provider, feature, quota 확인 |
-| Module 02 | Azure 기반 환경 준비 | 30분 | UAMI, custom VNet, NAP-enabled AKS, `workshop-nap` 준비 |
+| Module 01 | 사전 검사와 참가 조건 확인 | 20분 | 도구, 권한, provider, feature, quota 확인 |
+| Module 02 | Azure 기반 환경 준비 | 35분 | UAMI, custom VNet, NAP-enabled AKS, `workshop-nap` 준비 |
 | Module 03 | 이중 VN2 설치 | 20분 | OnDemand/Standby release와 node label 준비 |
-| Module 04 | AKS NAP와 OnDemand 측정 | 25분 | `aks-nap`, `vn2-ondemand` raw evidence 생성 |
-| Module 05 | StandbyPool과 Image Cache 측정 | 25분 | `vn2-standby`, `vn2-standby-cached` raw evidence 생성 |
-| Module 06 | 결과 분석 | 20분 | summary JSON/CSV/Markdown 생성 및 해석 |
+| Module 04 | AKS NAP와 OnDemand 측정 | 45분 | `aks-nap`, `vn2-ondemand` raw evidence 생성 |
+| Module 05 | StandbyPool과 Image Cache 측정 | 30분 | `vn2-standby`, `vn2-standby-cached` raw evidence 생성 |
+| Module 06 | 네 시나리오 결과 분석 | 15분 | summary JSON/CSV/Markdown 생성 및 해석 |
 | Module 07 | 제약, 트러블슈팅, 정리 | 10분 | 오류 분류, 잔여 리소스 확인, 전체 cleanup |
+|  | **합계** | **180분** |  |
 
 ## 문서 흐름
 
 1. [Module 01](docs/01-prerequisites.md) — 사전 검사와 참가 조건 확인
 2. [Module 02](docs/02-azure-foundation.md) — Azure 기반 환경 준비
 3. [Module 03](docs/03-install-dual-vn2.md) — 이중 VN2 설치
-4. [Module 04](docs/04-baseline-ondemand-benchmark.md) — 기준선과 OnDemand 측정
+4. [Module 04](docs/04-baseline-ondemand-benchmark.md) — AKS NAP와 VN2 OnDemand 측정
 5. [Module 05](docs/05-standby-cache-benchmark.md) — StandbyPool과 Image Cache 측정
 6. [Module 06](docs/06-analyze-results.md) — 결과 분석
 7. [Module 07](docs/07-limitations-troubleshooting-cleanup.md) — 제약, 트러블슈팅, 정리
@@ -185,7 +185,7 @@ fixed system node 크기는 `Standard_D16s_v5`이고 두 VN2 infrastructure rele
 - [ ] Module 02와 Module 03에서 `results/workshop.env` 를 최신 값으로 저장했다.
 - [ ] Module 02에서 `workshop-nap` NodePool Ready와 node/NodeClaim 0개를 확인했다.
 - [ ] Module 03에서 fixed system node는 unlabeled 상태로 두고 `benchmark-path=ondemand|standby` virtual node를 준비했다.
-- [ ] Module 04와 Module 05에서 네 시나리오의 raw JSON evidence를 모두 만들었다.
+- [ ] Module 04와 Module 05에서 네 시나리오의 12 raw JSON과 all-success 기준 60 Pod evidence를 만들었다.
 - [ ] Module 06에서 `results/summary.json`, `results/summary.csv`, `results/summary.md`를 생성했다.
 - [ ] 실패, timeout, fallback evidence를 삭제하지 않고 그대로 보관했다.
 - [ ] Module 07까지 완료해 잔여 리소스가 없는지 확인했다.

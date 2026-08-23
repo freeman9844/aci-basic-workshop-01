@@ -38,6 +38,15 @@ die() {
   exit 1
 }
 
+print_json_or_raw() {
+  local payload="$1"
+  if jq -e '.' >/dev/null 2>&1 <<<"$payload"; then
+    jq '.' <<<"$payload" >&2
+  else
+    printf '%s\n' "$payload" >&2
+  fi
+}
+
 require_value() {
   local option="$1"
   local value="${2:-}"
@@ -241,13 +250,28 @@ if [[ "$regional_vcpu_available" -lt "$REQUIRED_VM_VCPU_HEADROOM" ]]; then
   die "regional vCPU headroom is $regional_vcpu_available; need at least $REQUIRED_VM_VCPU_HEADROOM"
 fi
 
-aci_usage_json="$("$AZ_BIN" container list-usage --location "$location" --output json)"
+aci_usage_url="https://management.azure.com/subscriptions/$subscription_id/providers/Microsoft.ContainerInstance/locations/$location/usages?api-version=2025-09-01"
+set +e
+aci_usage_response="$("$AZ_BIN" rest --method get --url "$aci_usage_url" --output json 2>&1)"
+aci_usage_status=$?
+set -e
+if [[ "$aci_usage_status" -ne 0 ]]; then
+  die "failed to query ACI usage via Azure REST API: $aci_usage_response"
+fi
+
+if ! jq -e 'type == "object" and ((.value // null) | type == "array")' >/dev/null 2>&1 <<<"$aci_usage_response"; then
+  printf 'ERROR: Unexpected ACI usage response shape; refusing to guess.\n' >&2
+  print_json_or_raw "$aci_usage_response"
+  exit 1
+fi
+
+aci_usage_json="$(jq -c '.value' <<<"$aci_usage_response")"
 unexpected_aci_usage_names="$(jq -r '
   [.[].name.value // empty | select(. != "StandardContainerGroups" and . != "StandardCores")] | unique | .[]
 ' <<<"$aci_usage_json")"
 if [[ -n "$unexpected_aci_usage_names" ]]; then
   printf 'ERROR: Unexpected ACI usage fields; refusing to guess.\n' >&2
-  jq '.' <<<"$aci_usage_json" >&2
+  print_json_or_raw "$aci_usage_response"
   exit 1
 fi
 

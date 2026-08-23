@@ -80,7 +80,12 @@ case "${1-} ${2-}" in
   "vm list-usage")
     cat "$AZ_VM_USAGE_JSON"
     ;;
-  "container list-usage")
+  "rest --method")
+    expected_url="https://management.azure.com/subscriptions/00000000-0000-0000-0000-000000000001/providers/Microsoft.ContainerInstance/locations/koreacentral/usages?api-version=2025-09-01"
+    if [[ "$#" -ne 7 || "${3-}" != "get" || "${4-}" != "--url" || "${5-}" != "$expected_url" || "${6-}" != "--output" || "${7-}" != "json" ]]; then
+      printf 'Unexpected az rest call: %s\n' "$*" >&2
+      exit 1
+    fi
     cat "$AZ_ACI_USAGE_JSON"
     ;;
   *)
@@ -138,7 +143,7 @@ set_valid_defaults() {
   write_file "$TMP/role-assignments.json" '[{"roleDefinitionName":"Owner","scope":"/providers/Microsoft.Management/managementGroups/example"}]'
   write_file "$TMP/vm-skus.json" '[{"name":"Standard_D8s_v5","locations":["koreacentral"],"restrictions":[]}]'
   write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":10,"limit":32}]'
-  write_file "$TMP/aci-usage.json" '[{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20}]'
+  write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":7,"limit":20}]}'
   write_file "$TMP/kubectl-version.json" '{"clientVersion":{"gitVersion":"v1.30.2"}}'
   HELM_VERSION='v3.16.1'
   AZ_FEATURE_MODE='registered'
@@ -181,6 +186,7 @@ set_valid_defaults
 success_output="$(run_preflight 2>&1)"
 grep -F 'Preflight checks passed.' <<<"$success_output" >/dev/null
 test -f "$ENVIRONMENT_JSON"
+grep -F 'rest --method get --url https://management.azure.com/subscriptions/00000000-0000-0000-0000-000000000001/providers/Microsoft.ContainerInstance/locations/koreacentral/usages?api-version=2025-09-01 --output json' "$TMP/logs/az.log" >/dev/null
 python3 - "$ENVIRONMENT_JSON" <<'PY'
 import json
 import sys
@@ -227,11 +233,34 @@ set -e
 grep -F 'az feature register --namespace Microsoft.StandbyPool --name StandbyContainerGroupPoolPreview' <<<"$feature_output" >/dev/null
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '[{"name":{"value":"UnexpectedQuota","localizedValue":"Unexpected quota"},"currentValue":0,"limit":10}]'
+write_file "$TMP/aci-usage.json" '{}'
+set +e
+aci_missing_value_output="$(run_preflight 2>&1)"
+aci_missing_value_status=$?
+set -e
+[[ "$aci_missing_value_status" -ne 0 ]]
+grep -F 'Unexpected ACI usage response shape; refusing to guess.' <<<"$aci_missing_value_output" >/dev/null
+grep -F '{}' <<<"$aci_missing_value_output" >/dev/null
+[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+
+set_valid_defaults
+write_file "$TMP/aci-usage.json" '{"value":{"name":{"value":"StandardContainerGroups"},"currentValue":0,"limit":10}}'
+set +e
+aci_non_array_output="$(run_preflight 2>&1)"
+aci_non_array_status=$?
+set -e
+[[ "$aci_non_array_status" -ne 0 ]]
+grep -F 'Unexpected ACI usage response shape; refusing to guess.' <<<"$aci_non_array_output" >/dev/null
+grep -F '"value": {' <<<"$aci_non_array_output" >/dev/null
+[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+
+set_valid_defaults
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"UnexpectedQuota","localizedValue":"Unexpected quota"},"currentValue":0,"limit":10}]}'
 set +e
 aci_output="$(run_preflight 2>&1)"
 aci_status=$?
 set -e
 [[ "$aci_status" -ne 0 ]]
 grep -F 'Unexpected ACI usage fields; refusing to guess.' <<<"$aci_output" >/dev/null
+grep -F '"UnexpectedQuota"' <<<"$aci_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]

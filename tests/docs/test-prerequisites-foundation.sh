@@ -33,6 +33,8 @@ required_prereq = [
     "if [[ \"$FEATURE_RC\" -eq 0 ]]; then",
     "elif grep -qi 'ResourceNotFound'",
     "SUB_ID=\"$(az account show --query id -o tsv)\"",
+    "az rest --method get --url \"https://management.azure.com/subscriptions/$SUB_ID/providers/Microsoft.ContainerInstance/locations/koreacentral/usages?api-version=2025-09-01\" --output json",
+    "jq '.value'",
     "SP_OBJECT_ID=\"$(az ad sp list",
     "test -n \"$SP_OBJECT_ID\"",
     "./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5",

@@ -179,6 +179,13 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 | role assignment create 가 실패함 | 현재 사용자 권한 | `az role assignment list --assignee "$(az account show --query user.name -o tsv)" --scope "/subscriptions/$(az account show --query id -o tsv)" --include-inherited --output table` | 전용 교육용 구독 Owner 로 다시 로그인 |
 | preflight가 quota 또는 SKU 부족으로 실패함 | Korea Central 가용량 | `./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5` | quota 증설 또는 구독 교체 후 다시 시작 |
 
+ACI quota 증적이 필요하면 preflight와 같은 REST 경로를 직접 조회합니다. `az container list-usage` 는 현재 Azure CLI에 없으므로 사용하지 않습니다.
+
+```bash
+SUB_ID="$(az account show --query id -o tsv)"
+az rest --method get --url "https://management.azure.com/subscriptions/$SUB_ID/providers/Microsoft.ContainerInstance/locations/koreacentral/usages?api-version=2025-09-01" --output json | jq '.value'
+```
+
 ## 이전/다음
 
 - 이전: [README](../README.md)

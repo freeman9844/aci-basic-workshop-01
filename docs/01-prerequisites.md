@@ -180,6 +180,7 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 | preflight가 quota 또는 SKU 부족으로 실패함 | Korea Central 가용량 | `./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5` | quota 증설 또는 구독 교체 후 다시 시작 |
 
 ACI quota 증적이 필요하면 preflight와 같은 REST 경로를 직접 조회합니다. `az container list-usage` 는 현재 Azure CLI에 없으므로 사용하지 않습니다.
+현재 API 응답은 `ContainerGroups` 를 노출할 수 있고, 과거 응답은 `StandardContainerGroups` 를 노출할 수 있습니다. In other words, the current API may expose `ContainerGroups`, and historical responses may expose `StandardContainerGroups`. No guessing beyond these two container group quota names is allowed.
 
 ```bash
 SUB_ID="$(az account show --query id -o tsv)"

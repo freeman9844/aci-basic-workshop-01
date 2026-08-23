@@ -266,22 +266,37 @@ if ! jq -e 'type == "object" and ((.value // null) | type == "array")' >/dev/nul
 fi
 
 aci_usage_json="$(jq -c '.value' <<<"$aci_usage_response")"
-unexpected_aci_usage_names="$(jq -r '
-  [.[].name.value // empty | select(. != "StandardContainerGroups" and . != "StandardCores")] | unique | .[]
+aci_usage_name_counts_json="$(jq -c '
+  reduce .[] as $item ({};
+    .[(($item.name.value // ""))] = ((.[($item.name.value // "")] // 0) + 1)
+  )
 ' <<<"$aci_usage_json")"
-if [[ -n "$unexpected_aci_usage_names" ]]; then
+aci_usage_names_are_strict="$(jq_string "$aci_usage_name_counts_json" '
+  ([to_entries[].value == 1] | all)
+  and has("StandardCores")
+  and (([has("ContainerGroups"), has("StandardContainerGroups")] | map(select(.)) | length) == 1)
+  and ((to_entries | length) == 2)
+' 'ACI usage fields')"
+if [[ "$aci_usage_names_are_strict" != "true" ]]; then
   printf 'ERROR: Unexpected ACI usage fields; refusing to guess.\n' >&2
   print_json_or_raw "$aci_usage_response"
   exit 1
 fi
 
-aci_group_available="$(jq_string "$aci_usage_json" '
+aci_group_usage_name="$(jq_string "$aci_usage_name_counts_json" '
+  if has("ContainerGroups") then
+    "ContainerGroups"
+  else
+    "StandardContainerGroups"
+  end
+' 'ACI container groups usage name')"
+aci_group_available="$(jq_string "$aci_usage_json" "
   [
     .[]
-    | select((.name.value // "") == "StandardContainerGroups")
+    | select((.name.value // \"\") == \"$aci_group_usage_name\")
     | (.limit - .currentValue)
   ][0]
-' 'ACI StandardContainerGroups usage')"
+" 'ACI container groups usage')"
 aci_core_available="$(jq_string "$aci_usage_json" '
   [
     .[]
@@ -291,7 +306,7 @@ aci_core_available="$(jq_string "$aci_usage_json" '
 ' 'ACI StandardCores usage')"
 
 if [[ "$aci_group_available" -lt "$REQUIRED_ACI_GROUP_HEADROOM" ]]; then
-  die "ACI StandardContainerGroups headroom is $aci_group_available; need at least $REQUIRED_ACI_GROUP_HEADROOM"
+  die "ACI container groups headroom is $aci_group_available; need at least $REQUIRED_ACI_GROUP_HEADROOM"
 fi
 if [[ "$aci_core_available" -lt "$REQUIRED_ACI_CORE_HEADROOM" ]]; then
   die "ACI StandardCores headroom is $aci_core_available; need at least $REQUIRED_ACI_CORE_HEADROOM"

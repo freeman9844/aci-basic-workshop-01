@@ -271,23 +271,35 @@ test -f "$TMP/results/diagnostics/vn2-standby-cached-run-2/kubectl-events.txt"
 test -f "$TMP/results/diagnostics/vn2-standby-cached-run-2/kubectl-nodes.json"
 test -f "$TMP/results/diagnostics/vn2-standby-cached-run-2/az-container-list.json"
 
-python3 - "$TMP/logs/collector.log" <<'PY'
+python3 - "$TMP/logs/collector.log" "$TMP/logs/kubectl.log" <<'PY'
 import pathlib
 import sys
 
-lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip().splitlines()
-namespaces = []
-for line in lines:
+collector_lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").strip().splitlines()
+collector_namespaces = []
+for line in collector_lines:
     parts = line.split()
     for index, part in enumerate(parts):
         if part == "--namespace":
-            namespaces.append(parts[index + 1])
+            collector_namespaces.append(parts[index + 1])
             break
 
-if len(namespaces) != 2:
-    raise SystemExit(f"expected 2 collector runs, got {len(namespaces)}")
-if len(set(namespaces)) != 2:
-    raise SystemExit(f"expected unique namespaces, got {namespaces}")
+if len(collector_namespaces) != 2:
+    raise SystemExit(f"expected 2 collector runs, got {len(collector_namespaces)}")
+if len(set(collector_namespaces)) != 2:
+    raise SystemExit(f"expected unique namespaces, got {collector_namespaces}")
+
+kubectl_lines = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").strip().splitlines()
+created_namespaces = []
+for line in kubectl_lines:
+    parts = line.split()
+    if parts[:2] == ["create", "namespace"] and len(parts) >= 3:
+        created_namespaces.append(parts[2])
+
+if created_namespaces != collector_namespaces:
+    raise SystemExit(
+        f"collector namespaces {collector_namespaces} did not match created namespaces {created_namespaces}"
+    )
 PY
 
 test "$(wc -l <"$TMP/logs/standby.log")" -eq 4

@@ -64,6 +64,48 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(pod["scheduled_observed_ms"], 250.0)
         self.assertEqual(pod["ready_observed_ms"], 1000.0)
 
+    def test_collect_run_applies_manifest_into_requested_namespace(self):
+        workspace = self._workspace("apply-namespace")
+        output = workspace / "run.json"
+        manifest = workspace / "manifest.yaml"
+        manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
+        commands = []
+
+        def fake_runner(args, stdout=None, stderr=None, text=None):
+            commands.append(args)
+            if args == ["kubectl", "apply", "--namespace", "vn2-bench-aks-1", "-f", str(manifest)]:
+                return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
+            if args[:4] == ["kubectl", "get", "pods", "-n"]:
+                return _FakeCompletedProcess(stdout=json.dumps(fixture("pods-ready.json")), stderr="", returncode=0)
+            if args[:4] == ["kubectl", "get", "events", "-n"]:
+                return _FakeCompletedProcess(stdout="EVENTS", stderr="", returncode=0)
+            raise AssertionError(f"Unexpected command: {args}")
+
+        try:
+            result_code = MODULE.collect_run(
+                scenario="aks",
+                run_number=1,
+                namespace="vn2-bench-aks-1",
+                manifest=manifest,
+                expected_pods=1,
+                poll_interval_seconds=0.25,
+                timeout_seconds=300,
+                output=output,
+                runner=fake_runner,
+                sleeper=lambda _: None,
+                monotonic_ns=lambda: 0,
+                utc_now=lambda: "2026-08-23T00:00:00Z",
+            )
+
+            self.assertEqual(result_code, 0)
+            self.assertIn(
+                ["kubectl", "apply", "--namespace", "vn2-bench-aks-1", "-f", str(manifest)],
+                commands,
+            )
+        finally:
+            if workspace.parent.exists():
+                shutil.rmtree(workspace.parent)
+
     def test_collect_run_preserves_unobserved_manifest_pods(self):
         workspace = self._workspace("never-observed")
         output = workspace / "run.json"
@@ -80,7 +122,7 @@ class CollectorTests(unittest.TestCase):
         ticks = iter([0, 250_000_000, 500_000_000, 750_000_000, 1_000_000_000])
 
         def fake_runner(args, stdout=None, stderr=None, text=None):
-            if args[:3] == ["kubectl", "apply", "-f"]:
+            if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-aks-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
             if args[:4] == ["kubectl", "get", "pods", "-n"]:
                 return _FakeCompletedProcess(stdout=json.dumps(next(pod_snapshots)), stderr="", returncode=0)
@@ -126,7 +168,7 @@ class CollectorTests(unittest.TestCase):
         manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
 
         def fake_runner(args, stdout=None, stderr=None, text=None):
-            if args[:3] == ["kubectl", "apply", "-f"]:
+            if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-ondemand-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="apply boom", returncode=1)
             if args[:4] == ["kubectl", "get", "events", "-n"]:
                 return _FakeCompletedProcess(stdout="EVENTS", stderr="", returncode=0)
@@ -165,7 +207,7 @@ class CollectorTests(unittest.TestCase):
         manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
 
         def fake_runner(args, stdout=None, stderr=None, text=None):
-            if args[:3] == ["kubectl", "apply", "-f"]:
+            if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-standby-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
             if args[:4] == ["kubectl", "get", "pods", "-n"]:
                 return _FakeCompletedProcess(stdout="", stderr="get boom", returncode=1)
@@ -205,7 +247,7 @@ class CollectorTests(unittest.TestCase):
         manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
 
         def fake_runner(args, stdout=None, stderr=None, text=None):
-            if args[:3] == ["kubectl", "apply", "-f"]:
+            if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-aks-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
             if args[:4] == ["kubectl", "get", "pods", "-n"]:
                 return _FakeCompletedProcess(stdout="{", stderr="", returncode=0)

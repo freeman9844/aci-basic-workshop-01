@@ -466,7 +466,10 @@ def collect_run(
     collection_error = None
 
     try:
-        apply_result = _run_command(["kubectl", "apply", "-f", str(manifest)], runner=runner)
+        apply_result = _run_command(
+            ["kubectl", "apply", "--namespace", namespace, "-f", str(manifest)],
+            runner=runner,
+        )
     except CommandError as exc:
         apply_error = {
             "phase": "apply",

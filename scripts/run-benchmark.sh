@@ -29,6 +29,7 @@ standby_pool=""
 scenario_timeout_seconds=""
 render_only="false"
 work_dir=""
+scenario_deadline=""
 
 RUN_CREATE_STATUS=0
 RUN_COLLECTOR_STATUS=0
@@ -133,9 +134,6 @@ collector_timeout="$TIMEOUT_SECONDS"
 if [[ "$scenario" == "aks-nap" ]]; then
   collector_timeout="$NAP_POD_TIMEOUT_SECONDS"
 fi
-if [[ -n "$scenario_timeout_seconds" ]]; then
-  collector_timeout="$scenario_timeout_seconds"
-fi
 
 if [[ ! -f "$TEMPLATE_PATH" ]]; then
   printf 'ERROR: missing manifest template: %s\n' "$TEMPLATE_PATH" >&2
@@ -147,6 +145,52 @@ mkdir -p "$output_dir"
 scenario_slug="$(printf '%s' "$scenario" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"
 scenario_slug="${scenario_slug#-}"
 scenario_slug="${scenario_slug%-}"
+
+remaining_scenario_seconds() {
+  local maximum="$1"
+  local remaining="$maximum"
+
+  if [[ -n "$scenario_deadline" ]]; then
+    remaining=$((scenario_deadline - SECONDS))
+    if (( remaining < 0 )); then
+      remaining=0
+    fi
+    if (( remaining > maximum )); then
+      remaining="$maximum"
+    fi
+  fi
+
+  printf '%s\n' "$remaining"
+}
+
+run_with_scenario_deadline() {
+  local operation="$1"
+  shift
+
+  if [[ -z "$scenario_deadline" ]]; then
+    "$@"
+    return
+  fi
+
+  local remaining status
+  remaining="$(remaining_scenario_seconds "$scenario_timeout_seconds")"
+  if (( remaining <= 0 )); then
+    printf 'ERROR: scenario deadline exceeded before %s\n' "$operation" >&2
+    return 124
+  fi
+
+  if timeout --signal=KILL "${remaining}s" "$@"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+    printf 'ERROR: scenario deadline exceeded during %s\n' "$operation" >&2
+    return 124
+  fi
+  return "$status"
+}
 
 render_manifest() {
   local run_number="$1"
@@ -166,6 +210,7 @@ render_manifest() {
 
 wait_for_standby_pool() {
   local output_path="$1"
+  local checker_timeout
   if [[ "$node_path" != "standby" ]]; then
     return 0
   fi
@@ -174,25 +219,40 @@ wait_for_standby_pool() {
     exit 64
   fi
 
-  "$CHECK_STANDBY_BIN" \
+  : >"$output_path"
+  checker_timeout="$(remaining_scenario_seconds "$STANDBY_TIMEOUT_SECONDS")"
+  if (( checker_timeout <= 0 )); then
+    printf 'ERROR: scenario deadline exceeded before standby capacity check\n' >&2
+    return 124
+  fi
+
+  run_with_scenario_deadline "standby capacity check" "$CHECK_STANDBY_BIN" \
     --resource-group "$resource_group" \
     --name "$standby_pool" \
     --expect-running 5 \
-    --timeout-seconds "$STANDBY_TIMEOUT_SECONDS" \
+    --timeout-seconds "$checker_timeout" \
     --interval-seconds "$STANDBY_INTERVAL_SECONDS" >"$output_path"
 }
 
 wait_for_nap_zero_capacity() {
   local output_path="$1"
+  local checker_timeout
   if [[ "$scenario" != "aks-nap" ]]; then
     return 0
   fi
 
-  "$CHECK_NAP_BIN" \
+  : >"$output_path"
+  checker_timeout="$(remaining_scenario_seconds "$NAP_RESET_TIMEOUT_SECONDS")"
+  if (( checker_timeout <= 0 )); then
+    printf 'ERROR: scenario deadline exceeded before NAP capacity check\n' >&2
+    return 124
+  fi
+
+  run_with_scenario_deadline "NAP capacity check" "$CHECK_NAP_BIN" \
     --name workshop-nap \
     --expect-nodes 0 \
     --expect-nodeclaims 0 \
-    --timeout-seconds "$NAP_RESET_TIMEOUT_SECONDS" \
+    --timeout-seconds "$checker_timeout" \
     --interval-seconds "$NAP_INTERVAL_SECONDS" >"$output_path"
 }
 
@@ -204,22 +264,49 @@ cleanup_work_dir() {
 
 create_namespace() {
   local namespace="$1"
-  "$KUBECTL_BIN" create namespace "$namespace" >/dev/null
+  run_with_scenario_deadline "namespace creation" \
+    "$KUBECTL_BIN" create namespace "$namespace" >/dev/null
 }
 
 wait_for_namespace_gone() {
   local namespace="$1"
-  local started_at current_at
-  started_at="$(date +%s)"
+  local namespace_deadline status sleep_timeout
+  namespace_deadline=$((SECONDS + NAMESPACE_WAIT_TIMEOUT_SECONDS))
 
-  while "$KUBECTL_BIN" get namespace "$namespace" >/dev/null 2>&1; do
-    current_at="$(date +%s)"
-    if (( current_at - started_at >= NAMESPACE_WAIT_TIMEOUT_SECONDS )); then
+  while true; do
+    if run_with_scenario_deadline "namespace cleanup verification" \
+      "$KUBECTL_BIN" get namespace "$namespace" >/dev/null 2>&1; then
+      :
+    else
+      status=$?
+      if [[ "$status" -eq 124 ]]; then
+        return 124
+      fi
+      return 0
+    fi
+
+    if (( SECONDS >= namespace_deadline )); then
       printf 'ERROR: namespace %s still exists after %ss\n' \
         "$namespace" "$NAMESPACE_WAIT_TIMEOUT_SECONDS" >&2
       return 1
     fi
-    sleep "$NAMESPACE_WAIT_INTERVAL_SECONDS"
+
+    sleep_timeout=$((namespace_deadline - SECONDS))
+    if [[ -n "$scenario_deadline" ]] \
+      && (( scenario_deadline - SECONDS < sleep_timeout )); then
+      sleep_timeout=$((scenario_deadline - SECONDS))
+    fi
+    if (( sleep_timeout <= 0 )); then
+      printf 'ERROR: scenario deadline exceeded during namespace cleanup\n' >&2
+      return 124
+    fi
+    if ! timeout --signal=KILL "${sleep_timeout}s" \
+      sleep "$NAMESPACE_WAIT_INTERVAL_SECONDS"; then
+      if [[ -n "$scenario_deadline" && SECONDS -ge scenario_deadline ]]; then
+        printf 'ERROR: scenario deadline exceeded during namespace cleanup\n' >&2
+        return 124
+      fi
+    fi
   done
 }
 
@@ -247,8 +334,12 @@ capture_command_record() {
   : >"$stderr_path"
 
   set +e
-  "$@" >"$stdout_path" 2>"$stderr_path"
-  status=$?
+  if run_with_scenario_deadline "diagnostic command" \
+    "$@" >"$stdout_path" 2>"$stderr_path"; then
+    status=0
+  else
+    status=$?
+  fi
   set -e
 
   {
@@ -364,6 +455,7 @@ run_single_benchmark() {
   local raw_path="$3"
   local diagnostics_dir="$4"
   local namespace="$5"
+  local run_collector_timeout
 
   RUN_CREATE_STATUS=0
   RUN_COLLECTOR_STATUS=0
@@ -383,16 +475,23 @@ run_single_benchmark() {
   fi
 
   set +e
-  "$PYTHON_BIN" "$COLLECTOR_SCRIPT" \
-    --scenario "$scenario" \
-    --run "$run_number" \
-    --namespace "$namespace" \
-    --manifest "$manifest_path" \
-    --expected-pods "$EXPECTED_PODS" \
-    --poll-interval "$POLL_INTERVAL_SECONDS" \
-    --timeout-seconds "$collector_timeout" \
-    --output "$raw_path"
-  RUN_COLLECTOR_STATUS=$?
+  run_collector_timeout="$(remaining_scenario_seconds "$collector_timeout")"
+  if (( run_collector_timeout <= 0 )); then
+    printf 'ERROR: scenario deadline exceeded before collector\n' >&2
+    RUN_COLLECTOR_STATUS=124
+  else
+    run_with_scenario_deadline "collector" \
+      "$PYTHON_BIN" "$COLLECTOR_SCRIPT" \
+      --scenario "$scenario" \
+      --run "$run_number" \
+      --namespace "$namespace" \
+      --manifest "$manifest_path" \
+      --expected-pods "$EXPECTED_PODS" \
+      --poll-interval "$POLL_INTERVAL_SECONDS" \
+      --timeout-seconds "$run_collector_timeout" \
+      --output "$raw_path"
+    RUN_COLLECTOR_STATUS=$?
+  fi
 
   if capture_diagnostics "$diagnostics_dir" "$namespace"; then
     RUN_DIAGNOSTICS_STATUS=0
@@ -400,8 +499,12 @@ run_single_benchmark() {
     RUN_DIAGNOSTICS_STATUS=$?
   fi
 
-  "$KUBECTL_BIN" delete namespace "$namespace" >/dev/null
-  RUN_DELETE_STATUS=$?
+  if run_with_scenario_deadline "namespace deletion" \
+    "$KUBECTL_BIN" delete namespace "$namespace" >/dev/null; then
+    RUN_DELETE_STATUS=0
+  else
+    RUN_DELETE_STATUS=$?
+  fi
   wait_for_namespace_gone "$namespace"
   RUN_WAIT_STATUS=$?
   rm -f "$manifest_path"
@@ -433,6 +536,10 @@ if [[ "$render_only" == "true" ]]; then
     render_manifest "$run_number" "$output_dir/${scenario}-run-${run_number}.yaml"
   done
   exit 0
+fi
+
+if [[ -n "$scenario_timeout_seconds" ]]; then
+  scenario_deadline=$((SECONDS + scenario_timeout_seconds))
 fi
 
 work_dir="$output_dir/.run-benchmark"

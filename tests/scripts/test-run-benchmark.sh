@@ -16,6 +16,10 @@ cat >"$TMP/bin/check-standby-pool.sh" <<'FAKE_STANDBY'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_LOG_DIR/standby.log"
+call_number="$(wc -l <"$TEST_LOG_DIR/standby.log")"
+if [[ "${SLOW_STANDBY_CALL:-}" == "$call_number" ]]; then
+  sleep "${SLOW_STANDBY_SECONDS:-4}"
+fi
 printf '{"health":"healthy","running":5}\n'
 FAKE_STANDBY
 chmod +x "$TMP/bin/check-standby-pool.sh"
@@ -24,6 +28,10 @@ cat >"$TMP/bin/check-nap-capacity.sh" <<'FAKE_NAP'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_LOG_DIR/nap.log"
+call_number="$(wc -l <"$TEST_LOG_DIR/nap.log")"
+if [[ "${SLOW_NAP_CALL:-}" == "$call_number" ]]; then
+  sleep "${SLOW_NAP_SECONDS:-4}"
+fi
 printf '{"health":"ready","node_pool":"workshop-nap","nodes":0,"nodeclaims":0,"ready":true}\n'
 FAKE_NAP
 chmod +x "$TMP/bin/check-nap-capacity.sh"
@@ -44,6 +52,9 @@ cat >"$TMP/bin/python3" <<'FAKE_PYTHON'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_LOG_DIR/collector.log"
+if [[ "${SLOW_COLLECTOR:-0}" == "1" ]]; then
+  sleep "${SLOW_COLLECTOR_SECONDS:-4}"
+fi
 
 output=""
 run=""
@@ -90,6 +101,9 @@ cat >"$TMP/bin/kubectl" <<'FAKE_KUBECTL'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_LOG_DIR/kubectl.log"
+if [[ -n "${SLOW_KUBECTL_PREFIX:-}" && "$*" == "${SLOW_KUBECTL_PREFIX}"* ]]; then
+  sleep "${SLOW_KUBECTL_SECONDS:-4}"
+fi
 
 cmd="${1-}"
 subcmd="${2-}"
@@ -166,6 +180,8 @@ reset_behavior() {
   unset COLLECTOR_EXIT_RUN COLLECTOR_EXIT_CODE
   unset FAIL_CREATE_NAMESPACE FAIL_KUBECTL_DESCRIBE_PODS FAIL_KUBECTL_GET_EVENTS
   unset FAIL_KUBECTL_GET_NODES FAIL_AZ_CONTAINER_LIST
+  unset SLOW_STANDBY_CALL SLOW_STANDBY_SECONDS SLOW_NAP_CALL SLOW_NAP_SECONDS
+  unset SLOW_COLLECTOR SLOW_COLLECTOR_SECONDS SLOW_KUBECTL_PREFIX SLOW_KUBECTL_SECONDS
 }
 
 run_with_fakes() {
@@ -184,7 +200,40 @@ run_with_fakes() {
     FAIL_KUBECTL_GET_EVENTS="${FAIL_KUBECTL_GET_EVENTS-}" \
     FAIL_KUBECTL_GET_NODES="${FAIL_KUBECTL_GET_NODES-}" \
     FAIL_AZ_CONTAINER_LIST="${FAIL_AZ_CONTAINER_LIST-}" \
+    SLOW_STANDBY_CALL="${SLOW_STANDBY_CALL-}" \
+    SLOW_STANDBY_SECONDS="${SLOW_STANDBY_SECONDS-}" \
+    SLOW_NAP_CALL="${SLOW_NAP_CALL-}" \
+    SLOW_NAP_SECONDS="${SLOW_NAP_SECONDS-}" \
+    SLOW_COLLECTOR="${SLOW_COLLECTOR-}" \
+    SLOW_COLLECTOR_SECONDS="${SLOW_COLLECTOR_SECONDS-}" \
+    SLOW_KUBECTL_PREFIX="${SLOW_KUBECTL_PREFIX-}" \
+    SLOW_KUBECTL_SECONDS="${SLOW_KUBECTL_SECONDS-}" \
     "$ROOT/scripts/run-benchmark.sh" "$@"
+}
+
+monotonic_milliseconds() {
+  python3 - <<'PY'
+import time
+
+print(time.monotonic_ns() // 1_000_000)
+PY
+}
+
+assert_deadline_status() {
+  local status="$1"
+  local started_at="$2"
+  local label="$3"
+  local elapsed
+  elapsed=$(($(monotonic_milliseconds) - started_at))
+
+  if [[ "$status" -ne 124 ]]; then
+    printf 'expected %s to exit 124, got %s\n' "$label" "$status" >&2
+    exit 1
+  fi
+  if [[ "$elapsed" -ge 3000 ]]; then
+    printf 'expected %s to finish within deadline, took %sms\n' "$label" "$elapsed" >&2
+    exit 1
+  fi
 }
 
 reset_behavior
@@ -316,6 +365,101 @@ run_with_fakes \
 grep -F -- '--timeout-seconds 47' "$TMP/logs/collector.log" >/dev/null
 test ! -s "$TMP/logs/nap.log"
 test ! -s "$TMP/logs/standby.log"
+
+reset_behavior
+reset_logs
+SLOW_NAP_CALL=1
+SLOW_NAP_SECONDS=1
+SLOW_COLLECTOR=1
+SLOW_COLLECTOR_SECONDS=4
+started_at="$(monotonic_milliseconds)"
+set +e
+run_with_fakes \
+  --scenario aks-nap \
+  --runs 1 \
+  --scenario-timeout-seconds 2 \
+  --output-dir "$TMP/deadline-collector" >/dev/null 2>&1
+status=$?
+set -e
+assert_deadline_status "$status" "$started_at" "NAP precheck and collector lifecycle"
+test -e "$TMP/deadline-collector/diagnostics/aks-nap-run-1/nap-precheck.json"
+grep -F -- '--timeout-seconds 1' "$TMP/logs/collector.log" >/dev/null
+test -e "$TMP/deadline-collector/diagnostics/aks-nap-run-1/kubectl-describe-pods.txt"
+grep -F 'exit_status: 124' \
+  "$TMP/deadline-collector/diagnostics/aks-nap-run-1/kubectl-describe-pods.txt" >/dev/null
+test ! -e "$TMP/deadline-collector/.run-benchmark"
+
+reset_behavior
+reset_logs
+SLOW_STANDBY_CALL=1
+SLOW_STANDBY_SECONDS=4
+started_at="$(monotonic_milliseconds)"
+set +e
+run_with_fakes \
+  --scenario vn2-standby \
+  --runs 1 \
+  --resource-group rg-test \
+  --standby-pool pool-test \
+  --scenario-timeout-seconds 1 \
+  --output-dir "$TMP/deadline-standby-precheck" >/dev/null 2>&1
+status=$?
+set -e
+assert_deadline_status "$status" "$started_at" "standby precheck"
+test -e "$TMP/deadline-standby-precheck/diagnostics/vn2-standby-run-1/standby-precheck.json"
+test ! -s "$TMP/logs/collector.log"
+
+reset_behavior
+reset_logs
+SLOW_NAP_CALL=2
+SLOW_NAP_SECONDS=4
+started_at="$(monotonic_milliseconds)"
+set +e
+run_with_fakes \
+  --scenario aks-nap \
+  --runs 1 \
+  --scenario-timeout-seconds 1 \
+  --output-dir "$TMP/deadline-postcheck" >/dev/null 2>&1
+status=$?
+set -e
+assert_deadline_status "$status" "$started_at" "NAP postcheck"
+test -f "$TMP/deadline-postcheck/raw/aks-nap-run-1.json"
+test -e "$TMP/deadline-postcheck/diagnostics/aks-nap-run-1/nap-postcheck.json"
+
+reset_behavior
+reset_logs
+SLOW_KUBECTL_PREFIX="describe pods"
+SLOW_KUBECTL_SECONDS=4
+started_at="$(monotonic_milliseconds)"
+set +e
+run_with_fakes \
+  --scenario vn2-ondemand \
+  --runs 1 \
+  --scenario-timeout-seconds 1 \
+  --output-dir "$TMP/deadline-diagnostics" >/dev/null 2>&1
+status=$?
+set -e
+assert_deadline_status "$status" "$started_at" "diagnostics"
+test -f "$TMP/deadline-diagnostics/raw/vn2-ondemand-run-1.json"
+test -e "$TMP/deadline-diagnostics/diagnostics/vn2-ondemand-run-1/kubectl-describe-pods.txt"
+grep -F 'exit_status: 124' \
+  "$TMP/deadline-diagnostics/diagnostics/vn2-ondemand-run-1/kubectl-describe-pods.txt" >/dev/null
+
+reset_behavior
+reset_logs
+SLOW_KUBECTL_PREFIX="delete namespace"
+SLOW_KUBECTL_SECONDS=4
+started_at="$(monotonic_milliseconds)"
+set +e
+run_with_fakes \
+  --scenario vn2-ondemand \
+  --runs 1 \
+  --scenario-timeout-seconds 1 \
+  --output-dir "$TMP/deadline-cleanup" >/dev/null 2>&1
+status=$?
+set -e
+assert_deadline_status "$status" "$started_at" "namespace cleanup"
+test -f "$TMP/deadline-cleanup/raw/vn2-ondemand-run-1.json"
+grep -F 'delete namespace' "$TMP/logs/kubectl.log" >/dev/null
 
 reset_behavior
 reset_logs

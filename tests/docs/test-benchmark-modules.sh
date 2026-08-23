@@ -43,6 +43,8 @@ required_04 = [
     "find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort",
     "jq -r '.pods[] | [.name, .terminal_state, .create_to_ready_ms, .node_name] | @tsv'",
     "jq '{scenario, run, batch: {first_ready_ms: .batch.first_ready_ms, all_ready_ms: .batch.all_ready_ms}}'",
+    "aks-run-1-pod-1",
+    "aks-run-1-pod-2",
     "첫 run",
     "node image cache",
     "run별 JSON",
@@ -143,7 +145,14 @@ for item in required_05:
     if item not in text05:
         raise SystemExit(f"docs/05-standby-cache-benchmark.md is missing required text: {item}")
 
-for forbidden in ("$WORKSHOP_RG", "STANDBY_POOL_NAME", "--pool-name", "--pool-health"):
+for forbidden in (
+    "$WORKSHOP_RG",
+    "STANDBY_POOL_NAME",
+    "--pool-name",
+    "--pool-health",
+    "bench-aks-run-1-pod-1",
+    "bench-aks-run-1-pod-2",
+):
     if forbidden in text04:
         raise SystemExit(f"docs/04-baseline-ondemand-benchmark.md must not contain outdated text: {forbidden}")
     if forbidden in text05:

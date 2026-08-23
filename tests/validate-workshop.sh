@@ -96,6 +96,12 @@ validator = root / "tests/validate-workshop.sh"
 if not os.access(validator, os.X_OK):
     raise SystemExit("tests/validate-workshop.sh must be executable")
 
+unexpected_sitecustomize = root / "sitecustomize.py"
+if unexpected_sitecustomize.exists():
+    raise SystemExit(
+        "Root sitecustomize.py must not exist; Python auto-loads it globally and no slash-style import/invocation remains."
+    )
+
 
 def scan_text_file(path):
     for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):

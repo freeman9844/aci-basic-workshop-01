@@ -276,8 +276,10 @@ PY
 }
 
 assert_timeout_json_file() {
-  assert_json_file "$1"
-  python3 - "$1" <<'PY'
+  local path="$1"
+  shift
+  assert_json_file "$path"
+  python3 - "$path" "$@" <<'PY'
 import json
 import pathlib
 import sys
@@ -287,6 +289,11 @@ with path.open(encoding="utf-8") as handle:
     payload = json.load(handle)
 if payload.get("health") != "timeout":
     raise SystemExit(f"expected synthesized timeout evidence: {payload}")
+for key in sys.argv[2:]:
+    if key not in payload:
+        raise SystemExit(f"expected synthesized timeout evidence to include {key}: {payload}")
+    if payload[key] is not None:
+        raise SystemExit(f"expected unknown {key}, got {payload[key]!r}: {payload}")
 PY
 }
 
@@ -505,7 +512,8 @@ status=$?
 set -e
 assert_deadline_status "$status" "$started_at" "standby precheck"
 assert_timeout_json_file \
-  "$TMP/deadline-standby-precheck/diagnostics/vn2-standby-run-1/standby-precheck.json"
+  "$TMP/deadline-standby-precheck/diagnostics/vn2-standby-run-1/standby-precheck.json" \
+  creating deleting running starting
 test ! -s "$TMP/logs/collector.log"
 
 reset_behavior
@@ -517,14 +525,15 @@ set +e
 run_with_fakes \
   --scenario aks-nap \
   --runs 1 \
-  --scenario-timeout-seconds 1 \
+  --scenario-timeout-seconds 2 \
   --output-dir "$TMP/deadline-postcheck" >/dev/null 2>&1
 status=$?
 set -e
 assert_deadline_status "$status" "$started_at" "NAP postcheck"
 test -f "$TMP/deadline-postcheck/raw/aks-nap-run-1.json"
 assert_timeout_json_file \
-  "$TMP/deadline-postcheck/diagnostics/aks-nap-run-1/nap-postcheck.json"
+  "$TMP/deadline-postcheck/diagnostics/aks-nap-run-1/nap-postcheck.json" \
+  nodes nodeclaims
 
 reset_behavior
 reset_logs

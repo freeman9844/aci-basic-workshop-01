@@ -276,14 +276,14 @@ render_manifest() {
 write_standby_timeout_evidence() {
   local output_path="$1"
   printf '%s\n' \
-    '{"creating":0,"deleting":0,"health":"timeout","provisioning_state":null,"running":0,"starting":0}' \
+    '{"creating":null,"deleting":null,"health":"timeout","provisioning_state":null,"running":null,"starting":null}' \
     >"$output_path"
 }
 
 write_nap_timeout_evidence() {
   local output_path="$1"
   printf '%s\n' \
-    '{"health":"timeout","node_pool":"workshop-nap","nodes":0,"nodeclaims":0,"ready":false}' \
+    '{"health":"timeout","node_pool":"workshop-nap","nodes":null,"nodeclaims":null,"ready":false}' \
     >"$output_path"
 }
 

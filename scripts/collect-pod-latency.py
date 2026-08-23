@@ -36,6 +36,10 @@ class CommandError(RuntimeError):
     pass
 
 
+class CommandTimeoutError(CommandError):
+    pass
+
+
 class JSONParseError(RuntimeError):
     pass
 
@@ -342,9 +346,9 @@ def finalize_run(
         "expected_pods": expected_pods,
     }
 
-    if apply_error is not None:
+    if apply_error is not None and not apply_error.get("timeout"):
         completion_reason = "apply_failure"
-    elif collection_error is not None:
+    elif collection_error is not None and not collection_error.get("timeout"):
         completion_reason = "collection_failure"
     elif all_ready and len(pods) == expected_pods:
         completion_reason = "all_ready"
@@ -379,8 +383,23 @@ def finalize_run(
     return result
 
 
-def _run_command(args, *, runner=subprocess.run):
-    completed = runner(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+def _run_command(args, *, timeout_seconds=None, runner=subprocess.run):
+    if timeout_seconds is not None and timeout_seconds <= 0:
+        raise CommandTimeoutError(
+            f"Command timed out before execution: {' '.join(args)}"
+        )
+    try:
+        completed = runner(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise CommandTimeoutError(
+            f"Command timed out after {timeout_seconds:.3f}s: {' '.join(args)}"
+        ) from exc
     if completed.returncode != 0:
         raise CommandError(
             f"Command failed ({completed.returncode}): {' '.join(args)}\n{completed.stderr.strip()}"
@@ -393,8 +412,8 @@ def _run_command(args, *, runner=subprocess.run):
     }
 
 
-def _run_json_command(args, *, runner=subprocess.run):
-    result = _run_command(args, runner=runner)
+def _run_json_command(args, *, timeout_seconds=None, runner=subprocess.run):
+    result = _run_command(args, timeout_seconds=timeout_seconds, runner=runner)
     try:
         payload = json.loads(result["stdout"])
     except json.JSONDecodeError as exc:
@@ -403,9 +422,10 @@ def _run_json_command(args, *, runner=subprocess.run):
     return result
 
 
-def _fetch_events(namespace, *, runner=subprocess.run):
+def _fetch_events(namespace, *, timeout_seconds=None, runner=subprocess.run):
     result = _run_command(
         ["kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp"],
+        timeout_seconds=timeout_seconds,
         runner=runner,
     )
     return result["stdout"]
@@ -460,16 +480,28 @@ def collect_run(
     poll_count = 0
     stop_reason = "timeout"
     timeout_ms = float(timeout_seconds) * 1000.0
+    deadline_ns = start_ns + int(float(timeout_seconds) * 1_000_000_000)
     interval_seconds = max(0.0, float(poll_interval_seconds))
     apply_result = None
     apply_error = None
     collection_error = None
 
+    def remaining_timeout_seconds(now_ns):
+        return max(0.0, (deadline_ns - now_ns) / 1_000_000_000.0)
+
     try:
         apply_result = _run_command(
             ["kubectl", "apply", "--namespace", namespace, "-f", str(manifest)],
+            timeout_seconds=remaining_timeout_seconds(monotonic_ns()),
             runner=runner,
         )
+    except CommandTimeoutError as exc:
+        apply_error = {
+            "phase": "apply",
+            "message": str(exc),
+            "timeout": True,
+        }
+        stop_reason = "timeout"
     except CommandError as exc:
         apply_error = {
             "phase": "apply",
@@ -480,10 +512,23 @@ def collect_run(
         while True:
             now_ns = monotonic_ns()
             elapsed_ms = (now_ns - start_ns) / 1_000_000.0
+            if elapsed_ms >= timeout_ms:
+                stop_reason = "timeout"
+                break
             try:
                 latest = _run_json_command(
-                    ["kubectl", "get", "pods", "-n", namespace, "-o", "json"], runner=runner
+                    ["kubectl", "get", "pods", "-n", namespace, "-o", "json"],
+                    timeout_seconds=remaining_timeout_seconds(now_ns),
+                    runner=runner,
                 )
+            except CommandTimeoutError as exc:
+                collection_error = {
+                    "phase": "get",
+                    "message": str(exc),
+                    "timeout": True,
+                }
+                stop_reason = "timeout"
+                break
             except CommandError as exc:
                 collection_error = {
                     "phase": "get",
@@ -506,9 +551,6 @@ def collect_run(
             stop_reason = _should_stop(observations, expected_pods)
             if stop_reason:
                 break
-            if elapsed_ms >= timeout_ms:
-                stop_reason = "timeout"
-                break
             sleeper(interval_seconds)
 
     finished_utc = utc_now()
@@ -516,7 +558,11 @@ def collect_run(
     events_error = None
     events_text = ""
     try:
-        events_text = _fetch_events(namespace, runner=runner)
+        events_text = _fetch_events(
+            namespace,
+            timeout_seconds=remaining_timeout_seconds(finished_ns),
+            runner=runner,
+        )
     except Exception as exc:
         events_error = str(exc)
 

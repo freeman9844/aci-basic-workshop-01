@@ -1,7 +1,9 @@
 import importlib.util
 import json
+import os
 import shutil
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -81,7 +83,7 @@ class CollectorTests(unittest.TestCase):
         manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
         commands = []
 
-        def fake_runner(args, stdout=None, stderr=None, text=None):
+        def fake_runner(args, stdout=None, stderr=None, text=None, timeout=None):
             commands.append(args)
             if args == [
                 "kubectl",
@@ -145,7 +147,7 @@ class CollectorTests(unittest.TestCase):
         )
         ticks = iter([0, 250_000_000, 500_000_000, 750_000_000, 1_000_000_000])
 
-        def fake_runner(args, stdout=None, stderr=None, text=None):
+        def fake_runner(args, stdout=None, stderr=None, text=None, timeout=None):
             if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-aks-nap-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
             if args[:4] == ["kubectl", "get", "pods", "-n"]:
@@ -180,7 +182,8 @@ class CollectorTests(unittest.TestCase):
             self.assertIsNone(payload["pods"][1]["ready_observed_ms"])
             self.assertIsNone(payload["pods"][1]["scheduled_observed_ms"])
             self.assertEqual(payload["pods"][1]["terminal_state"], "timeout")
-            self.assertEqual(payload["latest_snapshot"]["events"], "EVENTS")
+            self.assertEqual(payload["latest_snapshot"]["events"], "")
+            self.assertIn("timed out before execution", payload["events_error"])
         finally:
             if workspace.parent.exists():
                 shutil.rmtree(workspace.parent)
@@ -191,7 +194,7 @@ class CollectorTests(unittest.TestCase):
         manifest = workspace / "manifest.yaml"
         manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
 
-        def fake_runner(args, stdout=None, stderr=None, text=None):
+        def fake_runner(args, stdout=None, stderr=None, text=None, timeout=None):
             if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-ondemand-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="apply boom", returncode=1)
             if args[:4] == ["kubectl", "get", "events", "-n"]:
@@ -230,7 +233,7 @@ class CollectorTests(unittest.TestCase):
         manifest = workspace / "manifest.yaml"
         manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
 
-        def fake_runner(args, stdout=None, stderr=None, text=None):
+        def fake_runner(args, stdout=None, stderr=None, text=None, timeout=None):
             if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-standby-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
             if args[:4] == ["kubectl", "get", "pods", "-n"]:
@@ -270,7 +273,7 @@ class CollectorTests(unittest.TestCase):
         manifest = workspace / "manifest.yaml"
         manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
 
-        def fake_runner(args, stdout=None, stderr=None, text=None):
+        def fake_runner(args, stdout=None, stderr=None, text=None, timeout=None):
             if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-aks-nap-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
             if args[:4] == ["kubectl", "get", "pods", "-n"]:
@@ -301,6 +304,94 @@ class CollectorTests(unittest.TestCase):
             self.assertEqual(payload["collection_error"]["phase"], "json")
             self.assertEqual(payload["pods"][0]["name"], "bench-1")
         finally:
+            if workspace.parent.exists():
+                shutil.rmtree(workspace.parent)
+
+    def test_each_kubectl_probe_uses_remaining_collector_deadline(self):
+        workspace = self._workspace("probe-deadlines")
+        output = workspace / "run.json"
+        manifest = workspace / "manifest.yaml"
+        manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
+        timeouts = []
+
+        def fake_runner(args, stdout=None, stderr=None, text=None, timeout=None):
+            timeouts.append(timeout)
+            if args[:2] == ["kubectl", "apply"]:
+                return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
+            if args[:4] == ["kubectl", "get", "pods", "-n"]:
+                return _FakeCompletedProcess(
+                    stdout=json.dumps(fixture("pods-ready.json")),
+                    stderr="",
+                    returncode=0,
+                )
+            if args[:4] == ["kubectl", "get", "events", "-n"]:
+                return _FakeCompletedProcess(stdout="EVENTS", stderr="", returncode=0)
+            raise AssertionError(f"Unexpected command: {args}")
+
+        try:
+            result_code = MODULE.collect_run(
+                scenario="aks-nap",
+                run_number=1,
+                namespace="vn2-bench-aks-nap-1",
+                manifest=manifest,
+                expected_pods=1,
+                poll_interval_seconds=0.25,
+                timeout_seconds=1,
+                output=output,
+                runner=fake_runner,
+                sleeper=lambda _: None,
+                utc_now=lambda: "2026-08-23T00:00:00Z",
+            )
+
+            self.assertEqual(result_code, 0)
+            self.assertEqual(len(timeouts), 3)
+            self.assertTrue(all(isinstance(value, (int, float)) for value in timeouts))
+            self.assertTrue(all(0 < value <= 1 for value in timeouts))
+            self.assertGreaterEqual(timeouts[0], timeouts[1])
+            self.assertGreaterEqual(timeouts[1], timeouts[2])
+        finally:
+            if workspace.parent.exists():
+                shutil.rmtree(workspace.parent)
+
+    def test_hanging_kubectl_probe_times_out_and_persists_raw_evidence(self):
+        workspace = self._workspace("hanging-probe")
+        output = workspace / "run.json"
+        manifest = workspace / "manifest.yaml"
+        manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
+        bin_dir = workspace / "bin"
+        bin_dir.mkdir()
+        kubectl = bin_dir / "kubectl"
+        kubectl.write_text(
+            "#!/usr/bin/env bash\nexec sleep 1\n",
+            encoding="utf-8",
+        )
+        kubectl.chmod(0o755)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = f"{bin_dir}:{old_path}"
+        started_at = time.monotonic()
+
+        try:
+            result_code = MODULE.collect_run(
+                scenario="aks-nap",
+                run_number=1,
+                namespace="vn2-bench-aks-nap-1",
+                manifest=manifest,
+                expected_pods=1,
+                poll_interval_seconds=0.01,
+                timeout_seconds=0.2,
+                output=output,
+            )
+
+            elapsed = time.monotonic() - started_at
+            self.assertEqual(result_code, 2)
+            self.assertLess(elapsed, 0.75)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["completion_reason"], "timeout")
+            self.assertEqual(payload["apply_error"]["phase"], "apply")
+            self.assertTrue(payload["apply_error"]["timeout"])
+            self.assertEqual(payload["pods"][0]["terminal_state"], "timeout")
+        finally:
+            os.environ["PATH"] = old_path
             if workspace.parent.exists():
                 shutil.rmtree(workspace.parent)
 

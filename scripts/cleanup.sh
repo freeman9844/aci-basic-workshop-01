@@ -7,6 +7,7 @@ HELM_BIN="${HELM_BIN:-helm}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-10}"
 DELETE_TIMEOUT_SECONDS="${DELETE_TIMEOUT_SECONDS:-1200}"
 CLUSTER_CLEANUP_TIMEOUT_SECONDS="${CLUSTER_CLEANUP_TIMEOUT_SECONDS:-30}"
+STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS="${STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS:-30}"
 NAP_ZERO_POLL_INTERVAL_SECONDS="${NAP_ZERO_POLL_INTERVAL_SECONDS:-2}"
 
 resource_group="${RESOURCE_GROUP:-${RG:-}}"
@@ -214,16 +215,28 @@ resolve_resource_group_target() {
 
 resolve_standby_pools() {
   local output status
+  standby_pools=()
+
   set +e
-  output="$("$AZ_BIN" standby-container-group-pool list --resource-group "$resource_group" --query '[].name' --output tsv 2>&1)"
+  output="$(timeout --signal=KILL "${STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS}s" \
+    "$AZ_BIN" standby-container-group-pool list --resource-group "$resource_group" \
+    --query '[].name' --output tsv 2>&1)"
   status=$?
   set -e
 
+  if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+    operation_failures+=("discover standby pools in $resource_group: timed out after ${STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS}s")
+    printf 'WARNING: standby pool discovery timed out in %s after %ss; continuing without explicit pool deletion because the resource group delete can remove child resources.\n' \
+      "$resource_group" "$STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS" >&2
+    return 0
+  fi
   if [[ "$status" -ne 0 ]]; then
-    die "Azure CLI error while listing standby pools in $resource_group: ${output:-command failed}"
+    operation_failures+=("failed to discover standby pools in $resource_group: ${output:-command failed}")
+    printf 'WARNING: failed to discover standby pools in %s: %s; continuing without explicit pool deletion because the resource group delete can remove child resources.\n' \
+      "$resource_group" "${output:-command failed}" >&2
+    return 0
   fi
 
-  standby_pools=()
   if [[ -n "$output" ]]; then
     mapfile -t standby_pools < <(printf '%s\n' "$output")
   fi
@@ -382,10 +395,16 @@ for pool_name in "${standby_pools[@]}"; do
     continue
   fi
   set +e
-  pool_delete_output="$("$AZ_BIN" standby-container-group-pool delete --resource-group "$resource_group" --name "$pool_name" --yes 2>&1)"
+  pool_delete_output="$(timeout --signal=KILL "${STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS}s" \
+    "$AZ_BIN" standby-container-group-pool delete --resource-group "$resource_group" \
+    --name "$pool_name" --yes 2>&1)"
   pool_delete_status=$?
   set -e
-  if [[ "$pool_delete_status" -ne 0 ]]; then
+  if [[ "$pool_delete_status" -eq 124 || "$pool_delete_status" -eq 137 ]]; then
+    operation_failures+=("delete standby pool $pool_name: timed out after ${STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS}s")
+    printf 'WARNING: standby pool deletion timed out for %s after %ss; continuing with resource group deletion because the resource group delete can remove child resources.\n' \
+      "$pool_name" "$STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS" >&2
+  elif [[ "$pool_delete_status" -ne 0 ]]; then
     operation_failures+=("failed to delete standby pool $pool_name: ${pool_delete_output:-command failed}")
     printf 'WARNING: failed to delete standby pool %s; continuing with resource group deletion because the resource group delete can remove child resources.\n' "$pool_name" >&2
   fi

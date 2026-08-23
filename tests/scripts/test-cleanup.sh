@@ -123,7 +123,7 @@ case "$*" in
     ;;
   "group show --name rg-test --query name --output tsv")
     case "${AZ_MODE:-success}" in
-      success|prompt|env-fallback|stuck|poll-error|pool-delete-fails)
+      success|prompt|env-fallback|stuck|poll-error|pool-delete-fails|pool-list-fails|pool-delete-hangs)
         printf 'rg-test\n'
         ;;
       *)
@@ -134,8 +134,12 @@ case "$*" in
     ;;
   "standby-container-group-pool list --resource-group rg-test --query [].name --output tsv")
     case "${AZ_MODE:-success}" in
-      success|prompt|env-fallback|stuck|poll-error|pool-delete-fails)
+      success|prompt|env-fallback|stuck|poll-error|pool-delete-fails|pool-delete-hangs)
         printf '%s\n' "${AZ_POOL_NAMES:-standby-pool-a}"
+        ;;
+      pool-list-fails)
+        printf 'standby pool list boom\n' >&2
+        exit 11
         ;;
       *)
         printf 'Unexpected AZ_MODE=%s\n' "${AZ_MODE:-}" >&2
@@ -149,6 +153,9 @@ case "$*" in
         printf 'standby pool delete boom\n' >&2
         exit 12
         ;;
+      pool-delete-hangs)
+        sleep 30
+        ;;
       *)
         exit 0
         ;;
@@ -161,7 +168,7 @@ case "$*" in
     count=$((count + 1))
     printf '%s' "$count" > "$count_file"
     case "${AZ_MODE:-success}" in
-      success|env-fallback)
+      success|env-fallback|pool-list-fails|pool-delete-hangs)
         if [[ "$count" -eq 1 ]]; then
           printf 'true\n'
         else
@@ -415,6 +422,46 @@ expected = [
 if lines != expected:
     raise SystemExit(f"unexpected pool-delete-fails command order: {lines!r}")
 PY
+
+rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
+set +e
+pool_list_failure_output="$(run_cleanup \
+  AZ_MODE=pool-list-fails \
+  "$ROOT/scripts/cleanup.sh" \
+  --resource-group rg-test \
+  --ondemand-namespace vn2-ondemand \
+  --standby-namespace vn2-standby \
+  --yes 2>&1)"
+pool_list_failure_status=$?
+set -e
+
+[[ "$pool_list_failure_status" -eq 0 ]]
+grep -F 'WARNING: failed to discover standby pools in rg-test: standby pool list boom' <<<"$pool_list_failure_output" >/dev/null
+grep -F 'Cleanup completed with warnings.' <<<"$pool_list_failure_output" >/dev/null
+grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
+
+rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
+set +e
+hanging_pool_delete_output="$(timeout 5s env \
+  TEST_LOG_DIR="$TMP/logs" \
+  AZ_STATE_DIR="$TMP/state" \
+  AZ_BIN="$TMP/bin/az" \
+  KUBECTL_BIN="$TMP/bin/kubectl" \
+  HELM_BIN="$TMP/bin/helm" \
+  AZ_MODE=pool-delete-hangs \
+  STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS=1 \
+  "$ROOT/scripts/cleanup.sh" \
+  --resource-group rg-test \
+  --ondemand-namespace vn2-ondemand \
+  --standby-namespace vn2-standby \
+  --yes 2>&1)"
+hanging_pool_delete_status=$?
+set -e
+
+[[ "$hanging_pool_delete_status" -eq 0 ]]
+grep -F 'WARNING: standby pool deletion timed out for standby-pool-a after 1s; continuing with resource group deletion because the resource group delete can remove child resources.' <<<"$hanging_pool_delete_output" >/dev/null
+grep -F 'Cleanup completed with warnings.' <<<"$hanging_pool_delete_output" >/dev/null
+grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 missing_output="$(run_cleanup \

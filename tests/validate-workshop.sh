@@ -19,6 +19,7 @@ run_step "Running NAP capacity checker tests" bash tests/scripts/test-check-nap-
 run_step "Running benchmark orchestration tests" bash tests/scripts/test-run-benchmark.sh
 run_step "Running preflight tests" bash tests/scripts/test-preflight.sh
 run_step "Running cleanup tests" bash tests/scripts/test-cleanup.sh
+run_step "Running validator regression tests" bash tests/scripts/test-validate-workshop.sh
 run_step "Running NAP template manifest tests" bash tests/manifests/test-nap-workshop-template.sh
 run_step "Running overview documentation tests" bash tests/docs/test-overview.sh
 run_step "Running prerequisites/foundation documentation tests" bash tests/docs/test-prerequisites-foundation.sh
@@ -293,7 +294,12 @@ for path in root.rglob("*"):
     if not path.is_file():
         continue
     relative = path.relative_to(root).as_posix()
-    if relative.startswith("docs/superpowers/") or relative.startswith("results/") or "__pycache__" in relative:
+    if (
+        relative.startswith("docs/superpowers/")
+        or relative.startswith(".superpowers/sdd/")
+        or relative.startswith("results/")
+        or "__pycache__" in relative
+    ):
         continue
     if path.suffix in {".pyc", ".png", ".jpg", ".jpeg", ".gif", ".pdf"}:
         continue

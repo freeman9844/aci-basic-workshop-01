@@ -137,9 +137,8 @@ StandbyPool이 compute 준비 시간을 줄여도 새 capacity가 benchmark imag
 
 ## 실제 리허설 참고 결과
 
-2026-08-23 Korea Central에서 시나리오당 5 Pods × 3회로 전체 워크숍을 실행했으며 60/60 Pods가 Ready, 실패와 timeout은 0이었습니다. 당시 Standby cached는 VN2 OnDemand 대비 Pod median 9.796배, Batch all-ready median 7.062배 빨랐습니다.
-
-이 수치는 워크숍 결과 해석을 돕는 참고 표본이며 SLA나 기대 출력이 아닙니다. 환경, 전체 표, p95와 리허설 중 발견한 운영상 주의사항은 [Korea Central 실제 리허설 참고 결과](docs/reference/korea-central-2026-08-23.md)를 확인하세요.
+> [!CAUTION]
+> 기존 2026-08-23 리허설은 이미 실행 중인 warm fixed AKS node를 측정했으므로 현재 `aks-nap` 아키텍처의 reference가 아닙니다. Task 11의 새 NAP live rehearsal reference가 게시될 때까지 기존 수치와 reference 문서는 **obsolete**이며 현재 기대값이나 SLA로 사용하지 마십시오.
 
 ## 사전 요구 사항
 

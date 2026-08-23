@@ -19,7 +19,7 @@ run_step "Running NAP capacity checker tests" bash tests/scripts/test-check-nap-
 run_step "Running benchmark orchestration tests" bash tests/scripts/test-run-benchmark.sh
 run_step "Running preflight tests" bash tests/scripts/test-preflight.sh
 run_step "Running cleanup tests" bash tests/scripts/test-cleanup.sh
-run_step "Running NAP NodePool manifest tests" bash tests/manifests/test-nap-workshop-nodepool.sh
+run_step "Running NAP template manifest tests" bash tests/manifests/test-nap-workshop-template.sh
 run_step "Running overview documentation tests" bash tests/docs/test-overview.sh
 run_step "Running prerequisites/foundation documentation tests" bash tests/docs/test-prerequisites-foundation.sh
 run_step "Running dual VN2 installation documentation tests" bash tests/docs/test-install-dual-vn2.sh

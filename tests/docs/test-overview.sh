@@ -58,6 +58,9 @@ required_readme_strings = [
     "Mandatory cleanup",
     "results/workshop.env",
     "fresh Cloud Shell recovery",
+    "Task 11의 새 NAP live rehearsal reference",
+    "기존 수치와 reference 문서는 **obsolete**",
+    "현재 기대값이나 SLA로 사용하지 마십시오",
 ]
 for required in required_readme_strings:
     if required not in readme_text:
@@ -69,6 +72,14 @@ for scenario in ("aks-nap", "vn2-ondemand", "vn2-standby", "vn2-standby-cached")
 
 if re.search(r"benchmark-path=aks(?!-nap)", readme_text):
     raise SystemExit("README must not route benchmark Pods to the fixed system node")
+
+for stale_reference in (
+    "Pod median 9.796배",
+    "Batch all-ready median 7.062배",
+    "[Korea Central 실제 리허설 참고 결과](docs/reference/korea-central-2026-08-23.md)",
+):
+    if stale_reference in readme_text:
+        raise SystemExit(f"README must not present the obsolete warm-AKS reference as current: {stale_reference}")
 
 module_rows = {}
 for line in readme_text.splitlines():

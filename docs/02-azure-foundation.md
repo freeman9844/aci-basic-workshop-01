@@ -344,7 +344,7 @@ source "$WORKSHOP_STATE"
   fi
 
   sed "s|@@AKS_SUBNET_ID@@|$AKS_SUBNET_ID|g" \
-    manifests/nap-workshop-nodepool.yaml \
+    manifests/nap-workshop-template.yaml \
     > results/nap-workshop.yaml
 
   if grep -Fq '@@AKS_SUBNET_ID@@' results/nap-workshop.yaml; then
@@ -386,11 +386,43 @@ source "$WORKSHOP_STATE"
 
 ## 문제 해결
 
+### fresh Cloud Shell에서 identity/VNet 권한 재확인
+
+아래 블록은 이전 subshell의 임시 변수에 의존하지 않습니다. 새 shell에서 persisted workshop state를 불러온 뒤 identity principal ID와 VNet ID를 다시 조회합니다.
+
+```bash
+cd ~/aci-vn2-performance-workshop
+WORKSHOP_STATE="results/workshop.env"
+source "$WORKSHOP_STATE"
+
+( set -euo pipefail
+  AKS_IDENTITY_PRINCIPAL_ID="$(az identity show \
+    --resource-group "$RG" \
+    --name "$AKS_IDENTITY" \
+    --query principalId -o tsv)"
+  VNET_ID="$(az network vnet show \
+    --resource-group "$RG" \
+    --name "$VNET" \
+    --query id -o tsv)"
+
+  if [[ -z "$AKS_IDENTITY_PRINCIPAL_ID" || -z "$VNET_ID" ]]; then
+    printf 'AKS identity principal ID or VNet ID could not be resolved.\n' >&2
+    exit 1
+  fi
+
+  az role assignment list \
+    --assignee-object-id "$AKS_IDENTITY_PRINCIPAL_ID" \
+    --scope "$VNET_ID" \
+    --query "[?roleDefinitionName=='Network Contributor']" \
+    --output table
+)
+```
+
 | 증상 | 확인 명령 | 조치 |
 | --- | --- | --- |
 | identity role assignment 실패 | `az identity show -g "$RG" -n "$AKS_IDENTITY" --query '{id:id,principalId:principalId}' -o json` | ARM ID와 principal ID를 혼용하지 않았는지 확인하고 VNet scope 역할을 다시 부여 |
 | NAP 옵션이 인식되지 않음 | `az version` | Azure CLI 2.76.0 이상으로 갱신하고 Module 01 preflight 재실행 |
-| AKS 생성이 network 권한으로 실패 | `az role assignment list --assignee-object-id "$AKS_IDENTITY_PRINCIPAL_ID" --scope "$VNET_ID" -o table` | cluster 생성 전에 UAMI의 VNet `Network Contributor` 전파를 확인 |
+| AKS 생성이 network 권한으로 실패 | 위 fresh Cloud Shell 재확인 블록 | cluster 생성 전에 UAMI의 VNet `Network Contributor` 전파를 확인 |
 | NAP CRD가 없음 | `kubectl get crd \| grep karpenter` | NAP Auto cluster 생성이 성공했는지 확인하고 임의 CRD를 수동 설치하지 않음 |
 | NodePool이 NotReady | `kubectl get nodepool workshop-nap -o yaml` | AKS subnet ID, SKU 요구사항, controller condition을 확인 |
 | 초기 node/NodeClaim이 0이 아님 | `kubectl get nodes,nodeclaims -l karpenter.sh/nodepool=workshop-nap` | 남은 workload를 제거하고 consolidation 완료 전 다음 모듈로 진행하지 않음 |

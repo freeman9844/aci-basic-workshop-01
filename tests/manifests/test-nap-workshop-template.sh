@@ -2,8 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-TEST_DIR="$ROOT/.test-nap-workshop-nodepool"
-MANIFEST="$ROOT/manifests/nap-workshop-nodepool.yaml"
+TEST_DIR="$ROOT/.test-nap-workshop-template"
+MANIFEST="$ROOT/manifests/nap-workshop-template.yaml"
 RENDERED="$TEST_DIR/rendered.yaml"
 SUBNET_ID="/subscriptions/test/resourceGroups/rg/providers/Microsoft.Network/virtualNetworks/vnet/subnets/aks"
 
@@ -16,7 +16,7 @@ cleanup
 mkdir -p "$TEST_DIR"
 
 if [[ ! -f "$MANIFEST" ]]; then
-  printf 'Missing required manifest: manifests/nap-workshop-nodepool.yaml\n' >&2
+  printf 'Missing required manifest: manifests/nap-workshop-template.yaml\n' >&2
   exit 1
 fi
 
@@ -71,4 +71,4 @@ if [[ "$(grep -c '^kind: NodePool$' "$RENDERED")" -ne 1 ]]; then
   exit 1
 fi
 
-printf 'PASS: NAP workshop NodePool manifest contract\n'
+printf 'PASS: NAP workshop template manifest contract\n'

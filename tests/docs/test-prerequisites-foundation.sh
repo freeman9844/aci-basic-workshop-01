@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 python3 - "$ROOT" <<'PY'
+import re
 import sys
 from pathlib import Path
 
@@ -116,7 +117,7 @@ required_foundation = [
     "--role Contributor",
     "az aks get-credentials",
     "sed \"s|@@AKS_SUBNET_ID@@|$AKS_SUBNET_ID|g\"",
-    "manifests/nap-workshop-nodepool.yaml",
+    "manifests/nap-workshop-template.yaml",
     "kubectl apply -f results/nap-workshop.yaml",
     "kubectl wait --for=condition=Ready nodepool/\"$NAP_NODEPOOL\" --timeout=10m",
     "kubectl get nodepool workshop-nap",
@@ -191,21 +192,43 @@ for forbidden_prereq in (
 if "kubelet identity" not in foundation_text:
     raise SystemExit("docs/02-azure-foundation.md must explain kubelet identity grants")
 
+recovery_match = re.search(
+    r"### fresh Cloud Shell에서 identity/VNet 권한 재확인\n\n"
+    r".*?```bash\n(.*?)```",
+    foundation_text,
+    re.S,
+)
+if not recovery_match:
+    raise SystemExit("docs/02-azure-foundation.md must contain the fresh-shell identity/VNet recovery block")
+
+recovery_block = recovery_match.group(1)
+for item in (
+    'WORKSHOP_STATE="results/workshop.env"',
+    'source "$WORKSHOP_STATE"',
+    'AKS_IDENTITY_PRINCIPAL_ID="$(az identity show',
+    'VNET_ID="$(az network vnet show',
+    "az role assignment list",
+    '--assignee-object-id "$AKS_IDENTITY_PRINCIPAL_ID"',
+    '--scope "$VNET_ID"',
+):
+    if item not in recovery_block:
+        raise SystemExit(
+            f"docs/02-azure-foundation.md fresh-shell recovery is missing required text: {item}"
+        )
+
 ordered_foundation_operations = [
     "az identity create",
     "VNET_ID=\"$(az network vnet show",
     "--role \"Network Contributor\"",
     "az aks create",
     "identityProfile.kubeletidentity.objectId",
-    "manifests/nap-workshop-nodepool.yaml",
+    "manifests/nap-workshop-template.yaml",
     "kubectl apply -f results/nap-workshop.yaml",
     "./scripts/check-nap-capacity.sh",
 ]
 positions = [foundation_text.index(item) for item in ordered_foundation_operations]
 if positions != sorted(positions):
     raise SystemExit("docs/02-azure-foundation.md must keep the supported NAP foundation operations in order")
-
-import re
 
 code_block_pattern = re.compile(r"```bash\n(.*?)```", re.S)
 for path, text in ((prereq, prereq_text), (foundation, foundation_text)):

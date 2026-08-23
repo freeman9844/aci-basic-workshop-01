@@ -75,6 +75,8 @@ find results/raw -maxdepth 1 -type f -name '*.json' | sort
 
 ### 1) summary 산출물 생성
 
+🟢 **실행**
+
 ```bash
 cd ~/aci-vn2-performance-workshop
 python3 scripts/summarize-results.py \
@@ -96,7 +98,11 @@ Successfully generated results/summary.json, results/summary.csv, and results/su
 
 ### 2) 시나리오 aggregate 해석
 
+👁️ **설명**
+
 `summary.json`의 top-level은 다음 순서의 네 행입니다: `aks-nap`, `vn2-ondemand`, `vn2-standby`, `vn2-standby-cached`. 아래 명령은 OnDemand 기준선과 세 candidate aggregate를 실제 키 이름으로 확인합니다.
+
+🟢 **실행**
 
 ```bash
 jq '.["aks-nap"]' results/summary.json
@@ -105,6 +111,8 @@ jq '.["vn2-standby"]' results/summary.json
 jq '.["vn2-standby-cached"]' results/summary.json
 jq '.["vn2-standby-cached"] | {scenario, runs_count, ready_samples, failed_count, timeout_count, create_to_ready_ms, create_to_scheduled_ms, scheduled_to_ready_ms, batch_first_ready_ms, batch_all_ready_ms, pod_speedup_ratio, batch_speedup_ratio}' results/summary.json
 ```
+
+👁️ **설명**
 
 여기서 읽는 핵심은 다음과 같습니다.
 
@@ -120,12 +128,18 @@ jq '.["vn2-standby-cached"] | {scenario, runs_count, ready_samples, failed_count
 
 ### 3) 개별 run evidence 해석
 
+👁️ **설명**
+
 aggregate 수치만 보면 fallback contamination, image pull, timeout 원인을 놓칩니다. 개별 run 은 `evidence.runs[]` 아래에 그대로 남습니다.
+
+🟢 **실행**
 
 ```bash
 jq '.["vn2-standby-cached"].evidence.runs[] | {run, metadata, batch, non_ready_pods}' results/summary.json
 python3 -m json.tool results/raw/vn2-standby-cached-run-1.json | sed -n '1,220p'
 ```
+
+👁️ **설명**
 
 실제로 확인해야 할 포인트는 다음과 같습니다.
 
@@ -136,11 +150,17 @@ python3 -m json.tool results/raw/vn2-standby-cached-run-1.json | sed -n '1,220p'
 
 ### 4) CSV/Markdown 산출물과 실제 컬럼명 확인
 
+👁️ **설명**
+
 `summary.csv` 는 시나리오 한 줄 요약용이고, `summary.md` 는 워크숍 공유용입니다. CSV header 는 아래와 정확히 일치합니다.
+
+📋 **예상 출력**
 
 ```text
 scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p95_ms,pod_min_ms,pod_max_ms,batch_first_ready_median_ms,batch_all_ready_median_ms,pod_speedup_ratio,batch_speedup_ratio,evidence_json
 ```
+
+👁️ **설명**
 
 따라서 다음처럼 읽으면 aggregate 와 evidence 가 어디에 있는지 즉시 구분됩니다.
 
@@ -149,6 +169,8 @@ scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p
 - `summary.json`: 자동 검토용. 개별 metric 구조를 가장 정확하게 보존합니다.
 
 ### 5) median, nearest-rank p95, speed-up 를 해석할 때의 원칙
+
+👁️ **설명**
 
 - median 은 `ready_samples` 기준으로 계산합니다. all-success 시나리오에서는 `ready_samples=15` 이므로 15개 성공 Pod 표본의 가운데 값입니다.
 - nearest-rank p95 는 보간하지 않습니다. 샘플 수가 15개일 때도 nearest-rank p95 를 그대로 쓰며, interpolated percentile 로 다시 계산하지 않습니다.
@@ -164,6 +186,8 @@ scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p
 
 ### 6) Korea Central live rehearsal reference
 
+📋 **예상 출력**
+
 2026-08-23 Korea Central에서 5 Pods × 3회씩 측정한 live reference가 게시되어 있습니다.
 
 | Scenario | Pod create→ready median | Batch all-ready median | Pod ratio | Batch ratio |
@@ -173,7 +197,11 @@ scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p
 | `vn2-standby` | 8,216.7 ms | 21,153.3 ms | 6.380x | 2.571x |
 | `vn2-standby-cached` | 5,431.7 ms | 8,067.0 ms | 9.651x | 6.741x |
 
+👁️ **설명**
+
 [Korea Central 2026-08-23 live rehearsal reference](./reference/korea-central-2026-08-23.md)에는 환경과 p95, NAP 0→1→0 lifecycle, StandbyPool `healthy`/`running=5`, cache 5→0→5 recycle, 실패/timeout/fallback evidence가 있습니다. 원본 정밀도와 ratio contract는 [reference JSON](./reference/korea-central-2026-08-23.json)에 있습니다.
+
+⚠️ **주의**
 
 이 값은 특정 rehearsal의 reference이며 SLA나 성능 보장이 아닙니다. 자신의 결과를 reference와 억지로 맞추지 말고 raw evidence, 실패/timeout, Azure region/SKU/capacity 조건을 함께 기록하십시오.
 

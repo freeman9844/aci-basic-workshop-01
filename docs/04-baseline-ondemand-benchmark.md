@@ -80,6 +80,8 @@ printf 'RG=%s\nSTANDBY_POOL=%s\n' "$RG" "$STANDBY_POOL"
 
 ### 1) workshop state와 helper 준비
 
+🟢 **실행**
+
 ```bash
 cd ~/aci-vn2-performance-workshop
 
@@ -170,9 +172,13 @@ mkdir -p results
 require_workshop_vars
 ```
 
+👁️ **설명**
+
 persistent errexit 설정은 사용하지 않습니다. checker나 benchmark의 nonzero exit code를 기록하고 같은 shell에서 evidence 확인과 복구를 계속해야 합니다.
 
 ### 2) NAP NodePool과 zero-capacity precheck
+
+🟢 **실행**
 
 ```bash
 check_nap_state "NAP zero-capacity precheck"
@@ -196,6 +202,8 @@ helper를 복구하지 않은 shell에서는 다음 표준 명령을 직접 실�
 exit code가 0일 때만 benchmark를 시작합니다. RC=2이면 NodePool 상태를 복구하고, RC=3이면 남은 node/NodeClaim과 workload를 조사합니다. zero state가 확인되지 않은 상태에서 다음 run을 시작하지 않습니다.
 
 ### 3) `aks-nap` 3회 실행
+
+🟢 **실행**
 
 ```bash
 run_and_capture_rc "aks-nap benchmark" \
@@ -229,9 +237,13 @@ case "$NAP_RC" in
 esac
 ```
 
+👁️ **설명**
+
 runner는 세 run 각각에서 Pod 생성 전에 `nap-precheck.json`으로 0/0을 확인합니다. Pod가 Ready인 동안 `nap-nodeclaims.yaml`, `kubectl-nodes.json`, `nap-nodepool.yaml`, `nap-events.txt`를 수집하고, namespace 삭제 뒤 `nap-postcheck.json`으로 다시 0/0을 확인합니다. post-check가 실패하면 다음 run을 시작하지 않습니다.
 
 ### 4) run별 NAP 0 → 1 → 0 evidence 확인
+
+🟢 **실행**
 
 ```bash
 find results/raw -maxdepth 1 -type f -name 'aks-nap-run-*.json' | sort
@@ -261,6 +273,8 @@ find results/diagnostics -maxdepth 2 -type f -path '*/aks-nap-run-*/*' | sort
 
 ### 5) `VN2 OnDemand` 3회 실행
 
+🟢 **실행**
+
 ```bash
 run_and_capture_rc "vn2-ondemand benchmark" \
   ./scripts/run-benchmark.sh \
@@ -289,7 +303,11 @@ case "$ONDEMAND_RC" in
 esac
 ```
 
+👁️ **설명**
+
 이 경로는 standby ready capacity 없이 ACI container group을 net-new로 준비합니다. 모든 VN2 scenario는 per-run ACI inventory를 남기기 위해 `--resource-group "$RG"`가 필수이며, 누락하면 runner가 benchmark 시작 전에 RC=64로 종료합니다. 따라서 VN2 run의 `az-container-list.json`이 resource group 누락 때문에 skip placeholder가 되는 것을 허용하지 않습니다.
+
+🟢 **실행**
 
 ```bash
 find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort
@@ -298,11 +316,17 @@ jq '{scenario, run, batch: {first_ready_ms: .batch.first_ready_ms, all_ready_ms:
 find results/diagnostics -maxdepth 2 -type f -path '*/vn2-ondemand-run-*/*' | sort
 ```
 
+👁️ **설명**
+
 `results/diagnostics/vn2-ondemand-run-1/`의 `kubectl-describe-pods.txt`, `kubectl-events.txt`, `kubectl-nodes.json`, `az-container-list.json`도 삭제하지 않습니다.
 
 ### 6) 실패한 시나리오만 archive하고 재실행
 
+👁️ **설명**
+
 같은 scenario를 재실행하면 고정 raw/diagnostics 경로가 덮어써집니다. Run the archive/rerun example only for the scenario that failed. Do not archive or rerun a scenario that already succeeded.
+
+🟢 **실행**
 
 ```bash
 # Example: rerun only the failed scenario after reviewing evidence.

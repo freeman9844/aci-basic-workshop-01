@@ -87,6 +87,8 @@ az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
 
 ### 1) Module 02 state file 과 AKS context 연속성 확인
 
+🟢 **실행**
+
 ```bash
 cd ~/aci-vn2-performance-workshop
 
@@ -157,9 +159,13 @@ persist_workshop_state() {
 )
 ```
 
+👁️ **설명**
+
 여기서는 새 변수를 다시 만들지 않습니다. Module 02의 `$RG`, AKS context와 `workshop-nap` zero-capacity 상태를 그대로 이어 받아야 이후 모듈의 resource group, subnet, pool 조회가 모두 같은 실습 환경을 가리킵니다. `results/workshop.env is the authoritative workshop state` 이므로 fresh Cloud Shell 에서는 먼저 이 파일을 source 한 뒤 같은 확인을 다시 실행합니다.
 
 ### 2) VN2 chart 저장소 추가와 pinned release 값 선언
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
@@ -215,11 +221,17 @@ persist_workshop_state
 source "$WORKSHOP_STATE"
 ```
 
+👁️ **설명**
+
 이 워크숍은 chart version을 고정합니다. `latest` 나 임의의 새 chart로 바꾸면 Helm value 이름, webhook 동작, standby profile 허용 범위가 달라져 실습 결과를 비교할 수 없습니다. Step 2가 끝나자마자 `results/workshop.env` 를 원자적으로 다시 써서 fresh Cloud Shell 이 step 6부터 재개되더라도 `VN2_CHART_VERSION`, `ONDEMAND_RELEASE`, `STANDBY_RELEASE` 는 이미 복구되고, 아직 존재하지 않는 `STANDBY_POOL` 은 stale 값 없이 비어 있는 상태로 남깁니다.
 
 ### 3) 두 release를 separate namespace 에 동시에 설치
 
+👁️ **설명**
+
 `vn2-ondemand` 는 cluster-scoped admission controller 를 소유하는 첫 번째 release 입니다. `vn2-standby` 는 같은 클러스터에서 concurrent 하게 동작해야 하므로 release/namespace 를 분리하고 `admissionControllerReplicaCount=0` 으로 고정합니다.
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
@@ -263,7 +275,11 @@ Standby 쪽은 `standbyPool.standbyPoolsCpu=1`, `standbyPool.standbyPoolsMemory=
 
 ### 4) 왜 첫 번째 release만 cluster-scoped admission controller 를 소유해야 하는가
 
+👁️ **설명**
+
 `virtual-node-admission-controller` 는 namespace 안의 Deployment가 아니라 cluster-scoped webhook 입니다. Helm은 cluster-scoped 리소스에 `meta.helm.sh/release-name` 과 `meta.helm.sh/release-namespace` annotation 으로 소유권을 기록하므로, 두 번째 release까지 같은 webhook 을 만들려고 하면 duplicate webhook ownership 충돌이 납니다.
+
+🟢 **실행**
 
 아래 명령으로 실제 소유권을 확인합니다.
 
@@ -282,9 +298,13 @@ kubectl get deployment -A | grep admission-controller
 helm list -A | grep '^vn2-'
 ```
 
+📋 **예상 출력**
+
 정상이라면 첫 줄은 `vn2-ondemand / vn2-ondemand` 처럼 보입니다. `vn2-standby` namespace 쪽에서는 webhook 복제본을 만들지 않아야 하므로 `admissionControllerReplicaCount=0` 이 빠지면 안 됩니다.
 
 ### 5) 두 virtual node Ready 확인과 path 라벨 점검
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
@@ -316,6 +336,8 @@ source "$WORKSHOP_STATE"
 )
 ```
 
+👁️ **설명**
+
 `kubectl wait` 는 label 이 아직 안 생긴 짧은 race 구간에서는 바로 끝날 수 있으므로, 위처럼 먼저 label 등장을 최대 10분 동안 bounded polling 한 뒤 Ready wait 로 넘어갑니다. 이 단계가 의미하는 capacity 기준은 16-vCPU/64-GiB fixed system node 한 대가 두 VN2 infrastructure release와 cluster system Pod를 안정적으로 호스팅해야 한다는 것입니다. Benchmark Pod는 이 node에 배치하지 않습니다.
 
 📋 **예상 출력**
@@ -332,6 +354,8 @@ virtual-node-standby           Ready    agent    ...   v1.34.x   standby
 이 단계가 끝나면 VN2 두 path는 Ready이고 NAP path는 NodePool만 Ready인 채 0개 node입니다. 이후 Module 04에서 `aks-nap` workload가 Pending될 때만 `Standard_D4s_v5` node가 생성됩니다.
 
 ### 6) standby pool 하나를 정확히 찾고 `STANDBY_POOL` export
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
@@ -393,9 +417,13 @@ source "$WORKSHOP_STATE"
 source "$WORKSHOP_STATE"
 ```
 
+👁️ **설명**
+
 이 변수는 다음 모듈에서 그대로 재사용합니다. 이름을 다른 변수로 바꾸지 말고 `STANDBY_POOL` 하나만 유지해야 `run-benchmark.sh`, pool recycle, image cache 단계가 같은 대상을 가리킵니다. Module 03는 이전 파일 끝에 export 를 덧붙이지 않고 전체 state file 을 원자적으로 다시 써서 이전 키와 새 키가 ambiguity 없이 하나씩만 남게 합니다.
 
 ### 7) healthy standby pool 과 running 5 확인
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"

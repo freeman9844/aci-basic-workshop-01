@@ -152,15 +152,23 @@ for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", 
 if "다음 모듈에서 그대로 재사용" not in text:
     raise SystemExit("docs/03-install-dual-vn2.md must say STANDBY_POOL continues into the next module")
 
-step1_match = re.search(
-    r"### 1\) Module 02 state file 과 AKS context 연속성 확인\n\n```bash\n(.*?)```",
-    text,
-    re.S,
-)
-if not step1_match:
-    raise SystemExit("docs/03-install-dual-vn2.md must contain the step 1 bash block")
+def extract_first_bash_block(step_heading: str) -> str:
+    section_match = re.search(
+        rf"{re.escape(step_heading)}\n(.*?)(?=\n### \d+\)|\n## 완료 체크포인트)",
+        text,
+        re.S,
+    )
+    if not section_match:
+        raise SystemExit(f"docs/03-install-dual-vn2.md is missing step section: {step_heading}")
 
-step1_block = step1_match.group(1)
+    block_match = re.search(r"```bash\n(.*?)```", section_match.group(1), re.S)
+    if not block_match:
+        raise SystemExit(f"docs/03-install-dual-vn2.md must contain a bash block in step: {step_heading}")
+
+    return block_match.group(1)
+
+
+step1_block = extract_first_bash_block("### 1) Module 02 state file 과 AKS context 연속성 확인")
 recovery_scratch = root / ".test-doc-install-dual-vn2-recovery"
 if recovery_scratch.exists():
     shutil.rmtree(recovery_scratch)
@@ -217,15 +225,7 @@ finally:
     if recovery_scratch.exists():
         shutil.rmtree(recovery_scratch)
 
-step2_match = re.search(
-    r"### 2\) VN2 chart 저장소 추가와 pinned release 값 선언\n\n```bash\n(.*?)```",
-    text,
-    re.S,
-)
-if not step2_match:
-    raise SystemExit("docs/03-install-dual-vn2.md must contain the step 2 bash block")
-
-step2_block = step2_match.group(1)
+step2_block = extract_first_bash_block("### 2) VN2 chart 저장소 추가와 pinned release 값 선언")
 
 scratch = root / ".test-doc-install-dual-vn2"
 if scratch.exists():

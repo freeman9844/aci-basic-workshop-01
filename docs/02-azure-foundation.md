@@ -132,9 +132,13 @@ printf 'Using Kubernetes version %s, system VM %s, NAP VM %s\n' \
 
 - `Using Kubernetes version ...` 한 줄이 보이면 state file과 고정 VM 크기가 함께 복구된 것입니다.
 
+👁️ **설명**
+
 `NAP_VM_SIZE`는 manifest의 `Standard_D4s_v5`와 일치해야 합니다. 임의의 SKU로 바꾸면 이 워크숍이 측정하려는 고정된 0→1 VM provisioning 경로가 달라집니다. `results/workshop.env is the authoritative workshop state` 이므로 새 Cloud Shell에서는 항상 `source "$WORKSHOP_STATE"`로 복구합니다.
 
 ### 2) custom VNet, delegated subnet, NAT Gateway 만들기
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
@@ -184,7 +188,11 @@ AKS subnet과 ACI `cg` subnet은 분리합니다. `cg`만 `Microsoft.ContainerIn
 
 ### 3) AKS용 user-assigned managed identity와 VNet 권한 준비
 
+👁️ **설명**
+
 NAP와 custom VNet을 함께 사용하므로 AKS 생성 전에 identity를 만들고 workshop VNet 전체 범위에 `Network Contributor`를 부여합니다.
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
@@ -252,9 +260,13 @@ source "$WORKSHOP_STATE"
 source "$WORKSHOP_STATE"
 ```
 
+👁️ **설명**
+
 `AKS_IDENTITY_ID`는 identity의 ARM resource ID이고, role assignment의 assignee는 `principalId`입니다. 두 값을 바꾸어 사용하지 않습니다.
 
 ### 4) NAP Auto와 fixed D16 system node로 AKS 만들기
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
@@ -289,11 +301,17 @@ source "$WORKSHOP_STATE"
 )
 ```
 
+👁️ **설명**
+
 `--node-provisioning-default-pools None`은 AKS가 기본 NAP NodePool을 만들지 않게 합니다. fixed system node는 `Standard_D16s_v5` 한 대이며 benchmark routing label을 갖지 않습니다. benchmark Pod는 이후 `workshop-nap`만 선택합니다.
 
 ### 5) kubelet identity 권한과 kubeconfig 준비
 
+👁️ **설명**
+
 VN2가 workshop RG와 AKS node RG의 리소스를 사용할 수 있도록 kubelet identity에 기존 Contributor 역할을 부여합니다.
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
@@ -336,11 +354,17 @@ source "$WORKSHOP_STATE"
 )
 ```
 
+⚠️ **주의**
+
 NAP CRD가 없거나 kubelet identity 역할이 실패하면 manifest를 적용하지 말고 해당 실패를 먼저 해결합니다.
 
 ### 6) 전용 AKSNodeClass와 NodePool 렌더링, 적용, 검증
 
+👁️ **설명**
+
 template에서 바뀌는 값은 AKS subnet ID 하나뿐입니다.
+
+🟢 **실행**
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
@@ -410,6 +434,8 @@ source "$WORKSHOP_STATE"
 
 source "$WORKSHOP_STATE"
 ```
+
+👁️ **설명**
 
 정상 상태는 NodePool Ready이면서 `workshop-nap` node와 NodeClaim이 모두 0개인 상태입니다. 이 단계에서는 benchmark Pod를 만들지 않으므로 D4 VM 비용이 아직 발생하지 않습니다.
 

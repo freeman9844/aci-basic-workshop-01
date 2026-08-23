@@ -224,7 +224,7 @@ if "- 다음: [README](../README.md)" not in text07:
     raise SystemExit("docs/07-limitations-troubleshooting-cleanup.md must link forward to README")
 
 fallback_match = re.search(
-    r"만약 `results/workshop\.env` 자체가 없다면, 아래 fallback 은 후보 RG를 찾는 용도만 사용합니다\.\n\n```bash\n(.*?)```",
+    r"만약 `results/workshop\.env` 자체가 없다면, 아래 fallback 은 후보 RG를 찾는 용도만 사용합니다\.\n\n(?:🟢 \*\*실행\*\*\n\n)?```bash\n(.*?)```",
     text07,
     re.S,
 )

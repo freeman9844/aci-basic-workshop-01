@@ -105,11 +105,17 @@ mkdir -p results
 )
 ```
 
+👁️ **설명**
+
 이 단계의 핵심은 역사적으로 `StandbyContainerGroupPoolPreview` 가 필요했던 구독과, 이제 feature 조회가 `ResourceNotFound` 로 끝나는 GA 구독을 둘 다 안전하게 처리하는 것입니다. `set -e` 복구도 subshell 안에서만 일어나므로 interactive parent Cloud Shell 옵션은 바뀌지 않습니다.
 
 ### 2) 워크숍 하루 전: Standby Pool Resource Provider 서비스 주체 RBAC 준비
 
+👁️ **설명**
+
 공개 MCR 이미지를 쓰더라도 Standby Pool Resource Provider 서비스 주체에는 구독 범위 역할 세 개가 필요합니다.
+
+🟢 **실행**
 
 ```bash
 cd ~/aci-vn2-performance-workshop
@@ -148,6 +154,8 @@ cd ~/aci-vn2-performance-workshop
 )
 ```
 
+👁️ **설명**
+
 Azure CLI는 built-in role 표시 이름을 부분 추정하지 않으므로 `Azure Container Instances Contributor Role` 처럼 현재 role definition의 정확한 이름을 그대로 써야 합니다.
 
 필수 역할은 다음 세 가지입니다.
@@ -158,7 +166,11 @@ Azure CLI는 built-in role 표시 이름을 부분 추정하지 않으므로 `Az
 
 ### 3) 실습 시작 직전: preflight 실행과 결과 확인
 
+👁️ **설명**
+
 이제 저장소가 제공하는 `scripts/preflight.sh` 로 참가자 환경을 다시 검증합니다.
+
+🟢 **실행**
 
 ```bash
 cd ~/aci-vn2-performance-workshop
@@ -172,6 +184,8 @@ cd ~/aci-vn2-performance-workshop
   cat results/environment.json
 )
 ```
+
+👁️ **설명**
 
 NAP에는 Azure CLI 2.76.0 이상과 managed identity, Standard Load Balancer가 필요합니다. 클러스터 생성 후에는 managed NAP controller와 NAP CRDs가 준비되었는지도 Module 02에서 확인합니다. 이 preflight는 고정 system node용 `Standard_D16s_v5`와 NAP node용 `Standard_D4s_v5`를 각각 검사하고, 두 VM을 동시에 만들 수 있도록 combined regional vCPU headroom of 20을 요구합니다.
 

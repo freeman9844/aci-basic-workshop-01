@@ -72,7 +72,8 @@ for scenario in ("aks-nap", "vn2-ondemand", "vn2-standby", "vn2-standby-cached")
     if scenario not in readme_text:
         raise SystemExit(f"README is missing scenario entry: {scenario}")
 
-if re.search(r"benchmark-path=aks(?!-nap)", readme_text):
+stale_aks_path = "benchmark-path=" + "aks"
+if re.search(re.escape(stale_aks_path) + r"(?!-nap)", readme_text):
     raise SystemExit("README must not route benchmark Pods to the fixed system node")
 
 for stale_reference in (

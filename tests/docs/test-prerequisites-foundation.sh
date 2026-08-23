@@ -146,6 +146,7 @@ required_foundation = [
     "results/workshop.env is the authoritative workshop state",
 ]
 
+stale_aks_path = "benchmark-path=" + "aks"
 forbidden_foundation = [
     "values[?starts_with(version, '1.34.')].version | [0]",
     "--service-cidr 10.4.0.0/16",
@@ -154,7 +155,7 @@ forbidden_foundation = [
     ">>\"$WORKSHOP_STATE\"",
     "tee -a \"$WORKSHOP_STATE\"",
     "--enable-managed-identity",
-    "benchmark-path=aks --overwrite",
+    stale_aks_path + " --overwrite",
     "kubectl label node",
     "VM_SIZE=\"${VM_SIZE:-Standard_D16s_v5}\"",
     "NAP_VM_SIZE=\"${NAP_VM_SIZE:-Standard_D4s_v5}\"",

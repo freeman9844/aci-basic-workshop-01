@@ -246,6 +246,47 @@ if not az_version_match or az_version_match.group(1) != "2.76.0":
 if expected_chart not in (root / "docs/03-install-dual-vn2.md").read_text(encoding="utf-8"):
     raise SystemExit("docs/03-install-dual-vn2.md must document the pinned VN2 chart version")
 
+active_contract_paths = {
+    root / "README.md",
+    root / "tests/validate-workshop.sh",
+    *module_paths.values(),
+    *sorted((root / "manifests").glob("*.yaml")),
+    *sorted((root / "scripts").glob("*.sh")),
+    *sorted((root / "scripts").glob("*.py")),
+    *sorted((root / "tests").glob("test_*.py")),
+    *sorted((root / "tests/docs").glob("*.sh")),
+    *sorted((root / "tests/manifests").glob("*.sh")),
+    *sorted((root / "tests/scripts").glob("*.sh")),
+    *sorted(path for path in (root / "tests/fixtures").rglob("*") if path.is_file()),
+}
+stale_contract_patterns = (
+    (
+        "--scenario " + "aks",
+        re.compile(re.escape("--scenario") + r"[ \t]+aks(?=[ \t\r\n]|$)", re.MULTILINE),
+    ),
+    (
+        "vn2-standby-" + "uncached",
+        re.compile(re.escape("vn2-standby-" + "uncached")),
+    ),
+    (
+        "benchmark-path=" + "aks",
+        re.compile(r"benchmark-path\s*=\s*aks(?=$|[^A-Za-z0-9_-])", re.MULTILINE),
+    ),
+)
+stale_contract_hits = []
+for path in sorted(active_contract_paths):
+    text = path.read_text(encoding="utf-8")
+    for label, pattern in stale_contract_patterns:
+        for match in pattern.finditer(text):
+            line_number = text.count("\n", 0, match.start()) + 1
+            stale_contract_hits.append(
+                f"{path.relative_to(root).as_posix()}:{line_number}: {label}"
+            )
+if stale_contract_hits:
+    raise SystemExit(
+        "Stale active workshop contract remains:\n" + "\n".join(stale_contract_hits)
+    )
+
 stale_hits = []
 stale_needles = ("Standard_D" + "8s_v5", "need at least " + "8")
 for path in root.rglob("*"):

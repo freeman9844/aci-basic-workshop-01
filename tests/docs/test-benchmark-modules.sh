@@ -166,22 +166,23 @@ for item in required_05:
     if item not in text05:
         raise SystemExit(f"docs/05-standby-cache-benchmark.md is missing required text: {item}")
 
+legacy_aks = "aks"
 for forbidden in (
     "$WORKSHOP_RG",
     "STANDBY_POOL_NAME",
     "--pool-name",
     "--pool-health",
-    "aks-run-",
-    "vn2-standby-uncached",
-    "bench-aks-run-1-pod-1",
-    "bench-aks-run-1-pod-2",
+    legacy_aks + "-run-",
+    "vn2-standby-" + "uncached",
+    "bench-" + legacy_aks + "-run-1-pod-1",
+    "bench-" + legacy_aks + "-run-1-pod-2",
 ):
     if forbidden in text04:
         raise SystemExit(f"docs/04-baseline-ondemand-benchmark.md must not contain outdated text: {forbidden}")
     if forbidden in text05:
         raise SystemExit(f"docs/05-standby-cache-benchmark.md must not contain outdated text: {forbidden}")
 
-if re.search(r"--scenario aks(?:\s|\\|$)", text04):
+if re.search(re.escape("--scenario " + legacy_aks) + r"(?:\s|\\|$)", text04):
     raise SystemExit("docs/04-baseline-ondemand-benchmark.md must not use the old aks scenario")
 
 for path, text in ((module04, text04), (module05, text05)):

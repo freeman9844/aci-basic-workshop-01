@@ -120,6 +120,7 @@ required_strings = [
     "results/workshop.env is the authoritative workshop state",
 ]
 
+stale_aks_path = "benchmark-path=" + "aks"
 forbidden_strings = [
     "$WORKSHOP_RG",
     "STANDBY_POOL_NAME",
@@ -130,7 +131,7 @@ forbidden_strings = [
     "같은 Cloud Shell 세션에 남아 있다",
     ">> \"$WORKSHOP_STATE\"",
     "tee -a \"$WORKSHOP_STATE\"",
-    "일반 AKS 노드에 `benchmark-path=aks`",
+    "일반 AKS 노드에 `" + stale_aks_path + "`",
 ]
 
 for item in required_strings:
@@ -141,7 +142,7 @@ for item in forbidden_strings:
     if item in text:
         raise SystemExit(f"docs/03-install-dual-vn2.md must not contain outdated text: {item}")
 
-if re.search(r"benchmark-path=aks(?!-nap)", text):
+if re.search(re.escape(stale_aks_path) + r"(?!-nap)", text):
     raise SystemExit("docs/03-install-dual-vn2.md must not route benchmark Pods to the fixed system node")
 
 for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 문제 해결", "## 이전/다음"):

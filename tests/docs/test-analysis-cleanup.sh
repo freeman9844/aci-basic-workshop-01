@@ -202,9 +202,9 @@ if "Cloud Shell 세션이 살아 있어" in text07:
     raise SystemExit("docs/07-limitations-troubleshooting-cleanup.md must not require the original Cloud Shell session")
 
 for forbidden in (
-    "vn2-standby-uncached",
-    "regular AKS",
-    "warm fixed AKS",
+    "vn2-standby-" + "uncached",
+    "regular " + "AKS",
+    "warm fixed " + "AKS",
     "korea-central-2026-08-23",
 ):
     if forbidden in text06:

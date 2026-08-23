@@ -49,11 +49,17 @@ required_prereq = [
     "5 warm standby instances while 5 benchmark Pods are active or refilling",
     "SP_OBJECT_ID=\"$(az ad sp list",
     "test -n \"$SP_OBJECT_ID\"",
-    "./scripts/preflight.sh --location koreacentral --vm-size Standard_D16s_v5",
+    "Azure CLI 2.76.0",
+    "--system-vm-size Standard_D16s_v5",
+    "--nap-vm-size Standard_D4s_v5",
+    "managed identity",
+    "Standard Load Balancer",
+    "NAP CRDs",
+    "combined regional vCPU headroom of 20",
     "cat results/environment.json",
     "Preflight checks passed.",
     "subshell keeps the interactive parent Cloud Shell safe",
-    "regional vCPU headroom is 15; need at least 16",
+    "regional vCPU headroom is 15; need at least 20",
 ]
 
 required_foundation = [

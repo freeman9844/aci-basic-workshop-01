@@ -224,12 +224,15 @@ preflight_text = (root / "scripts/preflight.sh").read_text(encoding="utf-8")
 chart_match = re.search(r'^VN2_CHART_VERSION="([^"]+)"$', preflight_text, re.MULTILINE)
 image_match = re.search(r'^BENCHMARK_IMAGE="([^"]+)"$', preflight_text, re.MULTILINE)
 vm_headroom_match = re.search(r'^REQUIRED_VM_VCPU_HEADROOM="([^"]+)"$', preflight_text, re.MULTILINE)
+az_version_match = re.search(r'^MIN_AZ_VERSION="([^"]+)"$', preflight_text, re.MULTILINE)
 if not chart_match or chart_match.group(1) != expected_chart:
     raise SystemExit("scripts/preflight.sh must pin VN2_CHART_VERSION to 1.3410.26081102")
 if not image_match or image_match.group(1) != expected_image:
     raise SystemExit("scripts/preflight.sh must pin the benchmark image digest")
-if not vm_headroom_match or vm_headroom_match.group(1) != "16":
-    raise SystemExit("scripts/preflight.sh must require 16 regional vCPU headroom")
+if not vm_headroom_match or vm_headroom_match.group(1) != "20":
+    raise SystemExit("scripts/preflight.sh must require 20 regional vCPU headroom")
+if not az_version_match or az_version_match.group(1) != "2.76.0":
+    raise SystemExit("scripts/preflight.sh must require Azure CLI 2.76.0")
 if expected_chart not in (root / "docs/03-install-dual-vn2.md").read_text(encoding="utf-8"):
     raise SystemExit("docs/03-install-dual-vn2.md must document the pinned VN2 chart version")
 

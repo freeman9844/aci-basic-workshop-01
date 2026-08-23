@@ -6,22 +6,23 @@ AZ_BIN="${AZ_BIN:-az}"
 KUBECTL_BIN="${KUBECTL_BIN:-kubectl}"
 HELM_BIN="${HELM_BIN:-helm}"
 
-MIN_AZ_VERSION="2.75.0"
+MIN_AZ_VERSION="2.76.0"
 MIN_KUBECTL_VERSION="1.30.0"
 REQUIRED_HELM_MAJOR="3"
-REQUIRED_VM_VCPU_HEADROOM="16"
+REQUIRED_VM_VCPU_HEADROOM="20"
 REQUIRED_ACI_GROUP_HEADROOM="10"
 REQUIRED_ACI_CORE_HEADROOM="10"
 VN2_CHART_VERSION="1.3410.26081102"
 BENCHMARK_IMAGE="mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
 
 location=""
-vm_size=""
+system_vm_size=""
+nap_vm_size=""
 environment_tmp=""
 
 usage() {
   cat <<'EOF'
-Usage: preflight.sh --location LOCATION --vm-size VM_SIZE
+Usage: preflight.sh --location LOCATION --system-vm-size SKU --nap-vm-size SKU
 EOF
 }
 
@@ -73,9 +74,32 @@ normalize_version() {
 
 version_at_least() {
   local actual
-  local minimum="$2"
+  local minimum
+  local actual_major actual_minor actual_patch
+  local minimum_major minimum_minor minimum_patch
+
   actual="$(normalize_version "$1")"
-  [[ "$(printf '%s\n%s\n' "$minimum" "$actual" | sort -V | head -n1)" == "$minimum" ]]
+  minimum="$(normalize_version "$2")"
+
+  if [[ ! "$actual" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    return 1
+  fi
+  actual_major="${BASH_REMATCH[1]}"
+  actual_minor="${BASH_REMATCH[2]}"
+  actual_patch="${BASH_REMATCH[3]}"
+
+  if [[ ! "$minimum" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    return 1
+  fi
+  minimum_major="${BASH_REMATCH[1]}"
+  minimum_minor="${BASH_REMATCH[2]}"
+  minimum_patch="${BASH_REMATCH[3]}"
+
+  ((10#$actual_major > 10#$minimum_major)) && return 0
+  ((10#$actual_major < 10#$minimum_major)) && return 1
+  ((10#$actual_minor > 10#$minimum_minor)) && return 0
+  ((10#$actual_minor < 10#$minimum_minor)) && return 1
+  ((10#$actual_patch >= 10#$minimum_patch))
 }
 
 require_command() {
@@ -109,9 +133,14 @@ while (($#)); do
       location="$2"
       shift 2
       ;;
-    --vm-size)
+    --system-vm-size)
       require_value "$1" "${2-}"
-      vm_size="$2"
+      system_vm_size="$2"
+      shift 2
+      ;;
+    --nap-vm-size)
+      require_value "$1" "${2-}"
+      nap_vm_size="$2"
       shift 2
       ;;
     -h|--help)
@@ -126,7 +155,7 @@ while (($#)); do
   esac
 done
 
-for required in location vm_size; do
+for required in location system_vm_size nap_vm_size; do
   if [[ -z "${!required}" ]]; then
     printf 'ERROR: missing required argument: %s\n' "$required" >&2
     usage >&2
@@ -141,7 +170,7 @@ require_command python3
 az_version_json="$("$AZ_BIN" version --output json)"
 azure_cli_version="$(normalize_version "$(jq_string "$az_version_json" '."azure-cli"' 'Azure CLI version')")"
 if ! version_at_least "$azure_cli_version" "$MIN_AZ_VERSION"; then
-  die "Azure CLI $MIN_AZ_VERSION or newer is required; found $azure_cli_version"
+  die "Azure CLI $MIN_AZ_VERSION or later is required for AKS NAP."
 fi
 
 kubectl_version_json="$("$KUBECTL_BIN" version --client --output json)"
@@ -204,46 +233,57 @@ if [[ "$has_owner_role" != "true" ]]; then
 fi
 
 vm_skus_json="$("$AZ_BIN" vm list-skus --location "$location" --resource-type virtualMachines --output json)"
-set +e
-matching_vm_skus_json="$(jq -c --arg size "$vm_size" --arg location "$location" '
-  [
-    .[]
-    | select((.name // "") == $size)
-    | select(
-        (
-          ((.locations // []) | length) == 0
-          and ((.locationInfo // []) | length) == 0
-        )
-        or (((.locations // []) | map(ascii_downcase) | index($location | ascii_downcase)) != null)
-        or (((.locationInfo // []) | map(.location // "" | ascii_downcase) | index($location | ascii_downcase)) != null)
-      )
-    | {
-        name: (.name // ""),
-        locations: (.locations // []),
-        locationInfo: (.locationInfo // []),
-        restrictions: (.restrictions // [])
-      }
-  ]
-' <<<"$vm_skus_json" 2>/dev/null)"
-matching_vm_skus_status=$?
-set -e
-if [[ "$matching_vm_skus_status" -ne 0 || -z "$matching_vm_skus_json" || "$matching_vm_skus_json" == "null" ]]; then
-  die "failed to parse VM SKU availability"
-fi
-matching_vm_skus_count="$(jq_string "$matching_vm_skus_json" 'length' 'matching VM SKU entries')"
-if [[ "$matching_vm_skus_count" -eq 0 ]]; then
-  die "VM size $vm_size is not available in $location"
-fi
+validate_vm_sku() {
+  local vm_size="$1"
+  local matching_vm_skus_json=""
+  local matching_vm_skus_status=0
+  local matching_vm_skus_count=""
+  local unrestricted_vm_sku_count=""
 
-unrestricted_vm_sku_count="$(jq_string "$matching_vm_skus_json" '
-  map(select((.restrictions // []) | length == 0)) | length
-' 'unrestricted VM SKU entries')"
-if [[ "$unrestricted_vm_sku_count" -eq 0 ]]; then
-  printf 'ERROR: VM size %s is restricted in %s.\n' "$vm_size" "$location" >&2
-  printf 'Restriction details:\n' >&2
-  jq '.' <<<"$matching_vm_skus_json" >&2
-  exit 1
-fi
+  set +e
+  matching_vm_skus_json="$(jq -c --arg size "$vm_size" --arg location "$location" '
+    [
+      .[]
+      | select((.name // "") == $size)
+      | select(
+          (
+            ((.locations // []) | length) == 0
+            and ((.locationInfo // []) | length) == 0
+          )
+          or (((.locations // []) | map(ascii_downcase) | index($location | ascii_downcase)) != null)
+          or (((.locationInfo // []) | map(.location // "" | ascii_downcase) | index($location | ascii_downcase)) != null)
+        )
+      | {
+          name: (.name // ""),
+          locations: (.locations // []),
+          locationInfo: (.locationInfo // []),
+          restrictions: (.restrictions // [])
+        }
+    ]
+  ' <<<"$vm_skus_json" 2>/dev/null)"
+  matching_vm_skus_status=$?
+  set -e
+  if [[ "$matching_vm_skus_status" -ne 0 || -z "$matching_vm_skus_json" || "$matching_vm_skus_json" == "null" ]]; then
+    die "failed to parse VM SKU availability"
+  fi
+  matching_vm_skus_count="$(jq_string "$matching_vm_skus_json" 'length' 'matching VM SKU entries')"
+  if [[ "$matching_vm_skus_count" -eq 0 ]]; then
+    die "VM size $vm_size is not available in $location"
+  fi
+
+  unrestricted_vm_sku_count="$(jq_string "$matching_vm_skus_json" '
+    map(select((.restrictions // []) | length == 0)) | length
+  ' 'unrestricted VM SKU entries')"
+  if [[ "$unrestricted_vm_sku_count" -eq 0 ]]; then
+    printf 'ERROR: VM size %s is restricted in %s.\n' "$vm_size" "$location" >&2
+    printf 'Restriction details:\n' >&2
+    jq '.' <<<"$matching_vm_skus_json" >&2
+    exit 1
+  fi
+}
+
+validate_vm_sku "$system_vm_size"
+validate_vm_sku "$nap_vm_size"
 
 vm_usage_json="$("$AZ_BIN" vm list-usage --location "$location" --output json)"
 set +e
@@ -368,7 +408,9 @@ jq -n \
   --arg subscription_id "$subscription_id" \
   --arg tenant_id "$tenant_id" \
   --arg location "$location" \
-  --arg vm_size "$vm_size" \
+  --arg system_vm_size "$system_vm_size" \
+  --arg nap_vm_size "$nap_vm_size" \
+  --argjson required_regional_vcpus "$REQUIRED_VM_VCPU_HEADROOM" \
   --arg azure_cli_version "$azure_cli_version" \
   --arg kubectl_version "$kubectl_version" \
   --arg helm_version "$helm_version" \
@@ -379,7 +421,9 @@ jq -n \
     subscription_id: $subscription_id,
     tenant_id: $tenant_id,
     location: $location,
-    vm_size: $vm_size,
+    system_vm_size: $system_vm_size,
+    nap_vm_size: $nap_vm_size,
+    required_regional_vcpus: $required_regional_vcpus,
     azure_cli_version: $azure_cli_version,
     kubectl_version: $kubectl_version,
     helm_version: $helm_version,

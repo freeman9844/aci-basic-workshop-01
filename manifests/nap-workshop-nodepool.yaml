@@ -1,0 +1,43 @@
+apiVersion: karpenter.azure.com/v1beta1
+kind: AKSNodeClass
+metadata:
+  name: workshop-nap
+spec:
+  vnetSubnetID: "@@AKS_SUBNET_ID@@"
+---
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: workshop-nap
+spec:
+  limits:
+    cpu: "4"
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+  template:
+    metadata:
+      labels:
+        benchmark-path: aks-nap
+    spec:
+      nodeClassRef:
+        group: karpenter.azure.com
+        kind: AKSNodeClass
+        name: workshop-nap
+      taints:
+        - key: benchmark-path
+          value: aks-nap
+          effect: NoSchedule
+      requirements:
+        - key: karpenter.azure.com/sku-name
+          operator: In
+          values: [Standard_D4s_v5]
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: [on-demand]
+        - key: kubernetes.io/os
+          operator: In
+          values: [linux]
+        - key: kubernetes.io/arch
+          operator: In
+          values: [amd64]

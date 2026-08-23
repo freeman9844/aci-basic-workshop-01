@@ -31,7 +31,7 @@ required_readme_strings = [
     "150분",
     "Korea Central",
     "5개 Pod × 3회",
-    "일반 AKS 노드",
+    "AKS NAP",
     "VN2 OnDemand",
     "StandbyPool",
     "Image Cache",
@@ -41,12 +41,16 @@ required_readme_strings = [
     "Owner",
     "AKS VM",
     "Standard_D16s_v5",
+    "Standard_D4s_v5",
+    "AKS NAP",
+    "workshop-nap",
+    "0개 node",
+    "fixed system node",
     "NAT Gateway",
     "public IP",
     "ACI OnDemand",
     "5개의 warm standby",
-    "두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline",
-    "1-node architecture",
+    "두 VN2 infrastructure release",
     "```mermaid",
     "VN2 Helm release: ondemand",
     "VN2 Helm release: standby",
@@ -59,9 +63,12 @@ for required in required_readme_strings:
     if required not in readme_text:
         raise SystemExit(f"README is missing required text: {required}")
 
-for scenario in ("aks", "vn2-ondemand", "vn2-standby-uncached", "vn2-standby-cached"):
+for scenario in ("aks-nap", "vn2-ondemand", "vn2-standby", "vn2-standby-cached"):
     if scenario not in readme_text:
         raise SystemExit(f"README is missing scenario entry: {scenario}")
+
+if re.search(r"benchmark-path=aks(?!-nap)", readme_text):
+    raise SystemExit("README must not route benchmark Pods to the fixed system node")
 
 module_rows = {}
 for line in readme_text.splitlines():

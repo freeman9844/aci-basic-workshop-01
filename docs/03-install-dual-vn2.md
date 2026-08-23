@@ -2,7 +2,7 @@
 
 ## 목표
 
-하나의 AKS 클러스터에 `vn2-ondemand` 와 `vn2-standby` 를 **동시에** 설치해 세 가지 node path(`aks`, `ondemand`, `standby`)를 고정합니다. 이후 네 가지 benchmark scenario는 이 세 가지 node path 위에서 실행되며, 두 standby scenario는 같은 `benchmark-path=standby` 경로를 쓰되 image cache 유무와 pool 상태만 다릅니다.
+하나의 AKS 클러스터에 `vn2-ondemand` 와 `vn2-standby` 를 **동시에** 설치해 세 가지 node path(`aks-nap`, `ondemand`, `standby`)를 고정합니다. `Standard_D16s_v5` fixed system node는 두 VN2 infrastructure release를 호스팅하며 benchmark routing에는 사용하지 않습니다. NAP benchmark NodePool은 0개 node에서 시작하고, 네 가지 benchmark scenario 중 두 standby scenario는 같은 `benchmark-path=standby` 경로를 쓰되 image cache 유무와 pool 상태만 다릅니다.
 
 ## 예상 소요 시간
 
@@ -11,15 +11,16 @@
 ## 시작 전 상태
 
 - Module 02가 성공해 `results/workshop.env` 가 존재한다.
-- `results/workshop.env` 에는 최소한 `RG`, `AKS`, `CG_SUBNET`, `K8S_VERSION` 이 저장되어 있다.
+- `results/workshop.env` 에는 최소한 `RG`, `AKS`, `CG_SUBNET`, `K8S_VERSION`, `AKS_IDENTITY_ID`, `NAP_VM_SIZE`, `NAP_NODEPOOL` 이 저장되어 있다.
 - `CG_SUBNET` 값은 계속 `cg` 여야 한다.
 - `az aks get-credentials` 가 이미 끝나 있어 현재 `kubectl` 컨텍스트가 이 실습용 AKS 를 가리키거나, fresh Cloud Shell 에서 다시 불러올 준비가 되어 있다.
-- 일반 AKS 노드에 `benchmark-path=aks` 라벨이 이미 붙어 있다.
+- `NodePool/workshop-nap`은 Ready이고 `karpenter.sh/nodepool=workshop-nap` node와 NodeClaim은 0개다.
+- fixed system node에는 benchmark routing label이 없다.
 - kubelet identity Contributor 권한과 Standby Pool Resource Provider RBAC가 이미 준비되었다.
 
 ## 진행 순서
 
-1. Module 02에서 만든 state file을 먼저 source 하고, `$RG`, `cg` subnet, AKS context 를 그대로 재사용하는지 확인합니다.
+1. Module 02에서 만든 state file을 먼저 source 하고, `$RG`, `cg` subnet, AKS context와 NAP zero-capacity 상태를 그대로 재사용하는지 확인합니다.
 2. VN2 Helm chart 저장소를 추가하고 chart version `1.3410.26081102` 를 고정합니다.
 3. `vn2-ondemand` 와 `vn2-standby` 를 서로 다른 namespace에 설치합니다.
 4. cluster-scoped `virtual-node-admission-controller` webhook 소유권이 첫 번째 release 하나에만 있는지 확인합니다.
@@ -49,6 +50,10 @@ persist_workshop_state() {
       printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
       printf 'export AKS=%q\n' "$AKS"
       printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+      printf 'export AKS_IDENTITY=%q\n' "$AKS_IDENTITY"
+      printf 'export AKS_IDENTITY_ID=%q\n' "$AKS_IDENTITY_ID"
+      printf 'export NAP_VM_SIZE=%q\n' "$NAP_VM_SIZE"
+      printf 'export NAP_NODEPOOL=%q\n' "$NAP_NODEPOOL"
       printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
       printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
       printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
@@ -72,6 +77,10 @@ source "$WORKSHOP_STATE"
   : "${RG:?Run Module 02 first or recover results/workshop.env before continuing.}"
   : "${AKS:?Run Module 02 first or recover results/workshop.env before continuing.}"
   : "${CG_SUBNET:?Run Module 02 first or recover results/workshop.env before continuing.}"
+  : "${AKS_IDENTITY:?Run Module 02 first or recover results/workshop.env before continuing.}"
+  : "${AKS_IDENTITY_ID:?Run Module 02 first or recover results/workshop.env before continuing.}"
+  : "${NAP_VM_SIZE:?Run Module 02 first or recover results/workshop.env before continuing.}"
+  : "${NAP_NODEPOOL:?Run Module 02 first or recover results/workshop.env before continuing.}"
 
   if [[ "$CG_SUBNET" != "cg" ]]; then
     printf 'Expected CG_SUBNET to stay cg, found %s\n' "$CG_SUBNET" >&2
@@ -79,11 +88,18 @@ source "$WORKSHOP_STATE"
   fi
 
   kubectl config current-context
+  ./scripts/check-nap-capacity.sh \
+    --name "$NAP_NODEPOOL" \
+    --expect-nodes 0 \
+    --expect-nodeclaims 0 \
+    --timeout-seconds 1200 \
+    --interval-seconds 15
+  kubectl get nodes -l karpenter.sh/nodepool=workshop-nap
   kubectl get nodes -L benchmark-path -o wide
 )
 ```
 
-여기서는 새 변수를 다시 만들지 않습니다. Module 02의 `$RG` 와 AKS context 를 그대로 이어 받아야 이후 모듈의 resource group, subnet, pool 조회가 모두 같은 실습 환경을 가리킵니다. `results/workshop.env is the authoritative workshop state` 이므로 fresh Cloud Shell 에서는 먼저 이 파일을 source 한 뒤 같은 확인을 다시 실행합니다.
+여기서는 새 변수를 다시 만들지 않습니다. Module 02의 `$RG`, AKS context와 `workshop-nap` zero-capacity 상태를 그대로 이어 받아야 이후 모듈의 resource group, subnet, pool 조회가 모두 같은 실습 환경을 가리킵니다. `results/workshop.env is the authoritative workshop state` 이므로 fresh Cloud Shell 에서는 먼저 이 파일을 source 한 뒤 같은 확인을 다시 실행합니다.
 
 ### 2) VN2 chart 저장소 추가와 pinned release 값 선언
 
@@ -105,6 +121,10 @@ persist_workshop_state() {
       printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
       printf 'export AKS=%q\n' "$AKS"
       printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+      printf 'export AKS_IDENTITY=%q\n' "$AKS_IDENTITY"
+      printf 'export AKS_IDENTITY_ID=%q\n' "$AKS_IDENTITY_ID"
+      printf 'export NAP_VM_SIZE=%q\n' "$NAP_VM_SIZE"
+      printf 'export NAP_NODEPOOL=%q\n' "$NAP_NODEPOOL"
       printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
       printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
       printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
@@ -236,18 +256,18 @@ source "$WORKSHOP_STATE"
 )
 ```
 
-`kubectl wait` 는 label 이 아직 안 생긴 짧은 race 구간에서는 바로 끝날 수 있으므로, 위처럼 먼저 label 등장을 최대 10분 동안 bounded polling 한 뒤 Ready wait 로 넘어갑니다. 이 단계가 의미하는 capacity 기준은 16-vCPU/64-GiB 한 대 위에 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline 을 함께 수용할 수 있어야 한다는 것입니다.
+`kubectl wait` 는 label 이 아직 안 생긴 짧은 race 구간에서는 바로 끝날 수 있으므로, 위처럼 먼저 label 등장을 최대 10분 동안 bounded polling 한 뒤 Ready wait 로 넘어갑니다. 이 단계가 의미하는 capacity 기준은 16-vCPU/64-GiB fixed system node 한 대가 두 VN2 infrastructure release와 cluster system Pod를 안정적으로 호스팅해야 한다는 것입니다. Benchmark Pod는 이 node에 배치하지 않습니다.
 
 예상 출력은 환경마다 이름이 달라도 다음 구조를 포함해야 합니다.
 
 ```text
 NAME                           STATUS   ROLES    AGE   VERSION   BENCHMARK-PATH
-aks-nodepool1-12345678-vmss0   Ready    agent    ...   v1.34.x   aks
+aks-system-12345678-vmss0      Ready    agent    ...   v1.34.x
 virtual-node-ondemand          Ready    agent    ...   v1.34.x   ondemand
 virtual-node-standby           Ready    agent    ...   v1.34.x   standby
 ```
 
-이 단계가 끝나면 세 가지 node path 는 모두 준비된 상태입니다. 이후 Module 04와 Module 05는 이 라벨만 바꿔 같은 workload를 네 가지 benchmark scenario로 실행합니다.
+이 단계가 끝나면 VN2 두 path는 Ready이고 NAP path는 NodePool만 Ready인 채 0개 node입니다. 이후 Module 04에서 `aks-nap` workload가 Pending될 때만 `Standard_D4s_v5` node가 생성됩니다.
 
 ### 6) standby pool 하나를 정확히 찾고 `STANDBY_POOL` export
 
@@ -269,6 +289,10 @@ persist_workshop_state() {
       printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
       printf 'export AKS=%q\n' "$AKS"
       printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+      printf 'export AKS_IDENTITY=%q\n' "$AKS_IDENTITY"
+      printf 'export AKS_IDENTITY_ID=%q\n' "$AKS_IDENTITY_ID"
+      printf 'export NAP_VM_SIZE=%q\n' "$NAP_VM_SIZE"
+      printf 'export NAP_NODEPOOL=%q\n' "$NAP_NODEPOOL"
       printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
       printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
       printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
@@ -346,7 +370,8 @@ az standby-container-group-pool status \
 - `vn2-ondemand` 와 `vn2-standby` 가 서로 다른 namespace에 동시에 설치되었다.
 - chart version `1.3410.26081102` 가 두 release 모두에 적용되었다.
 - `virtual-node-admission-controller` cluster-scoped 소유권이 `vn2-ondemand` 하나에만 있다.
-- `benchmark-path=aks`, `benchmark-path=ondemand`, `benchmark-path=standby` 가 `kubectl get nodes -L benchmark-path -o wide` 에서 모두 보인다.
+- fixed system node에는 benchmark label이 없고, `benchmark-path=ondemand`, `benchmark-path=standby` virtual node만 Ready로 보인다.
+- `workshop-nap` NodePool은 Ready이며 benchmark 시작 전 node와 NodeClaim이 0개다.
 - ondemand/standby virtual node 가 둘 다 Ready 상태다.
 - standby pool이 정확히 하나만 발견되었고 `export STANDBY_POOL=...` 가 성공했다.
 - `results/workshop.env` 가 Module 02 키를 유지한 채 `VN2_CHART_VERSION`, `ONDEMAND_RELEASE`, `STANDBY_RELEASE`, `STANDBY_POOL` 로 다시 저장되었다.
@@ -357,7 +382,7 @@ az standby-container-group-pool status \
 
 | 증상 | 원인 후보 | 확인 명령 | 조치 |
 | --- | --- | --- | --- |
-| `kubectl wait` 가 오래 걸리고 VN2 Pod가 Pending 이다 | AKS 노드에서 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline 을 동시에 올릴 16-vCPU/64-GiB capacity 가 부족함 | `kubectl get nodes -o wide`, `kubectl describe node "$(kubectl get nodes -l benchmark-path=aks -o jsonpath='{.items[0].metadata.name}')"`, `kubectl get pods -A -o wide`, `kubectl get events -A --sort-by=.metadata.creationTimestamp \| tail -n 40` | `Standard_D16s_v5` 한 대 기준으로 다시 만들거나, 다른 워크로드를 비운 뒤 Module 02부터 재시작 |
+| `kubectl wait` 가 오래 걸리고 VN2 Pod가 Pending 이다 | fixed system node에서 두 VN2 infrastructure release를 실행할 16-vCPU/64-GiB capacity가 부족함 | `kubectl get nodes -l kubernetes.azure.com/mode=system -o wide`, `kubectl get pods -A -o wide`, `kubectl get events -A --sort-by=.metadata.creationTimestamp \| tail -n 40` | `Standard_D16s_v5` system node 한 대 기준으로 다시 만들거나 다른 workload를 비운 뒤 Module 02부터 재시작 |
 | Helm 설치가 webhook annotation 충돌로 실패한다 | duplicate webhook ownership: 두 release가 모두 `virtual-node-admission-controller` 를 소유하려고 함 | `kubectl get mutatingwebhookconfiguration virtual-node-admission-controller -o yaml \| grep 'meta.helm.sh/release-'`, `helm status vn2-ondemand -n vn2-ondemand`, `helm status vn2-standby -n vn2-standby` | standby release에 `admissionControllerReplicaCount=0` 이 있는지 확인하고, 잘못 생성된 standby release를 제거한 뒤 다시 설치 |
 | standby 설치가 곧바로 실패한다 | rejected 1 vCPU/2 GiB profile: 지역/API가 `1 vCPU / 2 GiB` 조합을 거부함 | `helm status vn2-standby -n vn2-standby`, `kubectl get events -n vn2-standby --sort-by=.metadata.creationTimestamp \| tail -n 20`, `az standby-container-group-pool list --resource-group "$RG" --output json` | 자동 대체하지 말고 현재 구독/지역에서 허용되는 더 큰 최소 profile을 확인한 뒤 값을 명시적으로 조정 |
 | pool 이 생성되지 않거나 authorization 오류가 난다 | missing RBAC: Standby Pool Resource Provider 또는 kubelet identity 권한 누락 | `az role assignment list --assignee-object-id "$(az ad sp list --display-name 'Standby Pool Resource Provider' --query '[0].id' -o tsv)" --scope "/subscriptions/$(az account show --query id -o tsv)" --output table`, `az aks show -g "$RG" -n "$AKS" --query '{kubelet:identityProfile.kubeletidentity.objectId,nodeRg:nodeResourceGroup}' -o json` | Module 01의 세 가지 구독 역할과 Module 02의 kubelet Contributor 권한을 다시 부여한 뒤 Helm install 재시도 |

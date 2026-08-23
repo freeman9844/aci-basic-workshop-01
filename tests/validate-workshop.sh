@@ -19,6 +19,7 @@ run_step "Running NAP capacity checker tests" bash tests/scripts/test-check-nap-
 run_step "Running benchmark orchestration tests" bash tests/scripts/test-run-benchmark.sh
 run_step "Running preflight tests" bash tests/scripts/test-preflight.sh
 run_step "Running cleanup tests" bash tests/scripts/test-cleanup.sh
+run_step "Running NAP NodePool manifest tests" bash tests/manifests/test-nap-workshop-nodepool.sh
 run_step "Running overview documentation tests" bash tests/docs/test-overview.sh
 run_step "Running prerequisites/foundation documentation tests" bash tests/docs/test-prerequisites-foundation.sh
 run_step "Running dual VN2 installation documentation tests" bash tests/docs/test-install-dual-vn2.sh
@@ -257,9 +258,12 @@ if stale_hits:
     raise SystemExit("Stale D8/8-core workshop contract remains outside historical snapshots:\n" + "\n".join(stale_hits))
 
 for manifest_path in sorted((root / "manifests").glob("*.yaml")):
-    images = re.findall(r'^\s*image:\s*(\S+)\s*$', manifest_path.read_text(encoding="utf-8"), re.MULTILINE)
+    manifest_text = manifest_path.read_text(encoding="utf-8")
+    if not re.search(r"^kind:\s*Pod\s*$", manifest_text, re.MULTILINE):
+        continue
+    images = re.findall(r'^\s*image:\s*(\S+)\s*$', manifest_text, re.MULTILINE)
     if not images:
-        raise SystemExit(f"{manifest_path.relative_to(root).as_posix()} must declare an image")
+        raise SystemExit(f"{manifest_path.relative_to(root).as_posix()} Pod manifest must declare an image")
     for image in images:
         if image != expected_image:
             raise SystemExit(

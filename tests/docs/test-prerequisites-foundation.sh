@@ -70,11 +70,15 @@ required_foundation = [
     "VNET=\"vnet-vn2-bench\"",
     "AKS_SUBNET=\"snet-aks\"",
     "CG_SUBNET=\"cg\"",
-    "Azure CNI 와 `Standard_D16s_v5` 를 사용해 AKS를 만듭니다.",
+    "AKS_IDENTITY=\"id-aks-vn2-bench\"",
+    "AKS_IDENTITY_ID",
+    "NAP_VM_SIZE=\"Standard_D4s_v5\"",
+    "NAP_NODEPOOL=\"workshop-nap\"",
+    "Azure CNI, Standard Load Balancer, user-assigned managed identity, NAP Auto",
     "Module 01의 `results/environment.json` 이 이미 `Standard_D16s_v5` 와 `koreacentral` 을 검증했더라도",
-    "VM_SIZE=\"${VM_SIZE:-Standard_D16s_v5}\"",
-    "한 개 regular node 위에 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline을 같이 올리려면",
-    "`Standard_D16s_v5` 한 대를 유지한 1-node architecture",
+    "VM_SIZE=\"Standard_D16s_v5\"",
+    "fixed system node",
+    "NAP benchmark NodePool",
     "--query \"values[?version=='1.34'].patchVersions | [0]\"",
     "jq -r 'if type==\"object\" then (keys_unsorted | map(select(startswith(\"1.34.\"))) | sort_by(split(\".\")|map(tonumber)) | last // \"\") else \"\" end'",
     "test -n \"$K8S_VERSION\"",
@@ -89,18 +93,38 @@ required_foundation = [
     "az network nat gateway create",
     "az network vnet subnet update",
     "--nat-gateway \"$NAT_NAME\"",
+    "az identity create",
+    "--name \"$AKS_IDENTITY\"",
+    "--query id -o tsv",
+    "--query principalId -o tsv",
+    "VNET_ID=\"$(az network vnet show",
+    "--role \"Network Contributor\"",
+    "--scope \"$VNET_ID\"",
     "az aks create",
     "--network-plugin azure",
     "--node-vm-size \"$VM_SIZE\"",
     "--kubernetes-version \"$K8S_VERSION\"",
     "--service-cidr 172.16.0.0/16",
     "--dns-service-ip 172.16.0.10",
+    "--load-balancer-sku standard",
+    "--node-provisioning-mode Auto",
+    "--node-provisioning-default-pools None",
+    "--assign-identity \"$AKS_IDENTITY_ID\"",
     "identityProfile.kubeletidentity.objectId",
     "nodeResourceGroup",
     "az role assignment create",
     "--role Contributor",
     "az aks get-credentials",
-    "benchmark-path=aks",
+    "sed \"s|@@AKS_SUBNET_ID@@|$AKS_SUBNET_ID|g\"",
+    "manifests/nap-workshop-nodepool.yaml",
+    "kubectl apply -f results/nap-workshop.yaml",
+    "kubectl wait --for=condition=Ready nodepool/\"$NAP_NODEPOOL\" --timeout=10m",
+    "kubectl get nodepool workshop-nap",
+    "kubectl get nodes -l karpenter.sh/nodepool=workshop-nap",
+    "./scripts/check-nap-capacity.sh",
+    "--name \"$NAP_NODEPOOL\"",
+    "--expect-nodes 0",
+    "--expect-nodeclaims 0",
     "printf 'export LOCATION=%q\\n' \"$LOCATION\"",
     "printf 'export RG=%q\\n' \"$RG\"",
     "printf 'export VNET=%q\\n' \"$VNET\"",
@@ -110,6 +134,10 @@ required_foundation = [
     "printf 'export NAT_PIP_NAME=%q\\n' \"$NAT_PIP_NAME\"",
     "printf 'export AKS=%q\\n' \"$AKS\"",
     "printf 'export VM_SIZE=%q\\n' \"$VM_SIZE\"",
+    "printf 'export AKS_IDENTITY=%q\\n' \"$AKS_IDENTITY\"",
+    "printf 'export AKS_IDENTITY_ID=%q\\n' \"$AKS_IDENTITY_ID\"",
+    "printf 'export NAP_VM_SIZE=%q\\n' \"$NAP_VM_SIZE\"",
+    "printf 'export NAP_NODEPOOL=%q\\n' \"$NAP_NODEPOOL\"",
     "printf 'export K8S_VERSION=%q\\n' \"$K8S_VERSION\"",
     "chmod 600 \"$STATE_TMP\"",
     "mv \"$STATE_TMP\" \"$WORKSHOP_STATE\"",
@@ -124,6 +152,11 @@ forbidden_foundation = [
     ">> \"$WORKSHOP_STATE\"",
     ">>\"$WORKSHOP_STATE\"",
     "tee -a \"$WORKSHOP_STATE\"",
+    "--enable-managed-identity",
+    "benchmark-path=aks --overwrite",
+    "kubectl label node",
+    "VM_SIZE=\"${VM_SIZE:-Standard_D16s_v5}\"",
+    "NAP_VM_SIZE=\"${NAP_VM_SIZE:-Standard_D4s_v5}\"",
 ]
 
 for item in required_prereq:
@@ -158,6 +191,20 @@ for forbidden_prereq in (
 if "kubelet identity" not in foundation_text:
     raise SystemExit("docs/02-azure-foundation.md must explain kubelet identity grants")
 
+ordered_foundation_operations = [
+    "az identity create",
+    "VNET_ID=\"$(az network vnet show",
+    "--role \"Network Contributor\"",
+    "az aks create",
+    "identityProfile.kubeletidentity.objectId",
+    "manifests/nap-workshop-nodepool.yaml",
+    "kubectl apply -f results/nap-workshop.yaml",
+    "./scripts/check-nap-capacity.sh",
+]
+positions = [foundation_text.index(item) for item in ordered_foundation_operations]
+if positions != sorted(positions):
+    raise SystemExit("docs/02-azure-foundation.md must keep the supported NAP foundation operations in order")
+
 import re
 
 code_block_pattern = re.compile(r"```bash\n(.*?)```", re.S)
@@ -171,6 +218,10 @@ for path, text in ((prereq, prereq_text), (foundation, foundation_text)):
                 raise SystemExit(
                     f"{path.name} must not leave interactive parent shell options enabled with bare line: {line.strip()}"
                 )
+        if path == foundation and "persist_workshop_state" in block and "persist_workshop_state()" not in block:
+            raise SystemExit(
+                "docs/02-azure-foundation.md must redefine persist_workshop_state in every independently runnable block that uses it"
+            )
 
 if "results/workshop.env" not in foundation_text:
     raise SystemExit("docs/02-azure-foundation.md must persist results/workshop.env")

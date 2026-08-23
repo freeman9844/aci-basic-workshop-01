@@ -26,6 +26,10 @@ required_strings = [
     "WORKSHOP_STATE=\"results/workshop.env\"",
     "if [[ ! -f \"$WORKSHOP_STATE\" ]]; then",
     "source \"$WORKSHOP_STATE\"",
+    ": \"${AKS_IDENTITY:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
+    ": \"${AKS_IDENTITY_ID:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
+    ": \"${NAP_VM_SIZE:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
+    ": \"${NAP_NODEPOOL:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
     "--namespace vn2-ondemand",
     "--namespace vn2-standby",
     "--create-namespace",
@@ -83,6 +87,10 @@ required_strings = [
     "printf 'export NAT_PIP_NAME=%q\\n' \"$NAT_PIP_NAME\"",
     "printf 'export AKS=%q\\n' \"$AKS\"",
     "printf 'export VM_SIZE=%q\\n' \"$VM_SIZE\"",
+    "printf 'export AKS_IDENTITY=%q\\n' \"$AKS_IDENTITY\"",
+    "printf 'export AKS_IDENTITY_ID=%q\\n' \"$AKS_IDENTITY_ID\"",
+    "printf 'export NAP_VM_SIZE=%q\\n' \"$NAP_VM_SIZE\"",
+    "printf 'export NAP_NODEPOOL=%q\\n' \"$NAP_NODEPOOL\"",
     "printf 'export K8S_VERSION=%q\\n' \"$K8S_VERSION\"",
     "printf 'export VN2_CHART_VERSION=%q\\n' \"$VN2_CHART_VERSION\"",
     "printf 'export ONDEMAND_RELEASE=%q\\n' \"$ONDEMAND_RELEASE\"",
@@ -97,7 +105,10 @@ required_strings = [
     "--timeout-seconds 1200",
     "--interval-seconds 15",
     "16-vCPU/64-GiB",
-    "두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline",
+    "fixed system node",
+    "두 VN2 infrastructure release",
+    "NAP benchmark NodePool은 0개 node에서 시작",
+    "karpenter.sh/nodepool=workshop-nap",
     "duplicate webhook ownership",
     "rejected 1 vCPU/2 GiB profile",
     "missing RBAC",
@@ -118,6 +129,7 @@ forbidden_strings = [
     "같은 Cloud Shell 세션에 남아 있다",
     ">> \"$WORKSHOP_STATE\"",
     "tee -a \"$WORKSHOP_STATE\"",
+    "일반 AKS 노드에 `benchmark-path=aks`",
 ]
 
 for item in required_strings:
@@ -127,6 +139,9 @@ for item in required_strings:
 for item in forbidden_strings:
     if item in text:
         raise SystemExit(f"docs/03-install-dual-vn2.md must not contain outdated text: {item}")
+
+if re.search(r"benchmark-path=aks(?!-nap)", text):
+    raise SystemExit("docs/03-install-dual-vn2.md must not route benchmark Pods to the fixed system node")
 
 for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 문제 해결", "## 이전/다음"):
     if heading not in text:
@@ -164,6 +179,10 @@ try:
                 "export NAT_PIP_NAME='pip-vn2-bench'",
                 "export AKS='aks-vn2-bench'",
                 "export VM_SIZE='Standard_D16s_v5'",
+                "export AKS_IDENTITY='id-aks-vn2-bench'",
+                "export AKS_IDENTITY_ID='/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-bench'",
+                "export NAP_VM_SIZE='Standard_D4s_v5'",
+                "export NAP_NODEPOOL='workshop-nap'",
                 "export K8S_VERSION='1.34.12'",
                 "export VN2_CHART_VERSION='stale-chart'",
                 "export ONDEMAND_RELEASE='stale-ondemand'",
@@ -214,6 +233,10 @@ try:
         "NAT_PIP_NAME",
         "AKS",
         "VM_SIZE",
+        "AKS_IDENTITY",
+        "AKS_IDENTITY_ID",
+        "NAP_VM_SIZE",
+        "NAP_NODEPOOL",
         "K8S_VERSION",
         "VN2_CHART_VERSION",
         "ONDEMAND_RELEASE",
@@ -256,6 +279,10 @@ try:
                     '[[ "$NAT_PIP_NAME" == "pip-vn2-bench" ]]',
                     '[[ "$AKS" == "aks-vn2-bench" ]]',
                     '[[ "$VM_SIZE" == "Standard_D16s_v5" ]]',
+                    '[[ "$AKS_IDENTITY" == "id-aks-vn2-bench" ]]',
+                    '[[ "$AKS_IDENTITY_ID" == "/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-bench" ]]',
+                    '[[ "$NAP_VM_SIZE" == "Standard_D4s_v5" ]]',
+                    '[[ "$NAP_NODEPOOL" == "workshop-nap" ]]',
                     '[[ "$K8S_VERSION" == "1.34.12" ]]',
                     '[[ "$VN2_CHART_VERSION" == "1.3410.26081102" ]]',
                     '[[ "$ONDEMAND_RELEASE" == "vn2-ondemand" ]]',

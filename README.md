@@ -1,12 +1,12 @@
 # ACI VN2 성능 워크숍 개요
 
-이 저장소는 **Korea Central** 기준으로 일반 AKS 노드, **VN2 OnDemand**, **StandbyPool**, **Image Cache** 조합을 같은 조건으로 측정하는 150분 실습 안내서입니다. 목표는 참가자가 `5개 Pod × 3회` 반복 측정을 통해 Pod 시작 지연과 batch 완료 시간을 직접 수집하고 해석하도록 돕는 것입니다.
+이 저장소는 **Korea Central** 기준으로 **AKS NAP**, **VN2 OnDemand**, **StandbyPool**, **Image Cache** 조합을 같은 조건으로 측정하는 150분 실습 안내서입니다. 목표는 참가자가 `5개 Pod × 3회` 반복 측정을 통해 Pod 시작 지연과 batch 완료 시간을 직접 수집하고 해석하도록 돕는 것입니다.
 
 > [!WARNING]
 > 이 워크숍은 **전용 교육용 Azure 구독의 Owner 권한**을 전제로 합니다. 기존 production 구독이나 공유 AKS 클러스터에서 진행하지 마세요.
 
 > [!WARNING]
-> **비용**이 즉시 발생합니다. 실습 중에는 AKS VM, `cg` subnet에 연결한 **NAT Gateway** 와 **public IP**, **ACI OnDemand** container group 생성, 그리고 StandbyPool의 **5개의 warm standby** container groups가 함께 유지됩니다. regular AKS VM은 `Standard_D16s_v5` 한 대를 유지한 1-node architecture 로 고정하며, 이는 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline 이 이전의 더 작은 regular node 크기에서는 CPU 부족으로 막혔기 때문입니다. Module 07의 정리 절차를 생략하면 실습 종료 후에도 과금이 계속됩니다.
+> **비용**이 즉시 발생합니다. 실습 중에는 두 VN2 infrastructure release와 cluster system Pod를 호스팅하는 `Standard_D16s_v5` fixed system node, NAP benchmark 때 0→1로 생성되는 `Standard_D4s_v5` AKS VM, `cg` subnet에 연결한 **NAT Gateway** 와 **public IP**, **ACI OnDemand** container group, 그리고 StandbyPool의 **5개의 warm standby** container groups가 함께 사용됩니다. Module 07의 정리 절차를 생략하면 실습 종료 후에도 과금이 계속됩니다.
 
 ## 빠른 시작
 
@@ -37,16 +37,20 @@ flowchart TB
   user[Participant<br>Azure Cloud Shell Bash] --> scripts[Workshop scripts<br>preflight, benchmark, summarize, cleanup]
   scripts --> api[AKS API server]
 
-  subgraph aks[Single AKS cluster]
-    vm[AKS VM node<br>Scenario A]
+  subgraph aks[Single NAP-enabled AKS cluster]
+    system[Fixed system node<br>Standard_D16s_v5<br>VN2 infrastructure]
+    nap[workshop-nap NodePool<br>0 to 1 Standard_D4s_v5<br>benchmark-path=aks-nap]
     ondemand[VN2 Helm release: ondemand<br>node label: benchmark-path=ondemand]
     standby[VN2 Helm release: standby<br>node label: benchmark-path=standby]
   end
 
-  api --> vm
+  api --> nap
   api --> ondemand
   api --> standby
+  system --> ondemand
+  system --> standby
 
+  nap --> vm[New AKS VM node<br>Scenario A]
   ondemand --> aci1[ACI net-new container groups<br>Scenario B]
   standby --> pool[ACI Standby Pool<br>maxReadyCapacity=5]
   pool --> aci2[Warm UVM, uncached image<br>Scenario C]
@@ -60,30 +64,30 @@ flowchart TB
 
 | ID | 시나리오 | 실행 위치 | 측정 목적 |
 | --- | --- | --- | --- |
-| `aks` | 일반 AKS 노드 | 이미 준비된 일반 AKS 노드 | 프로비저닝된 VM 기준선 확보 |
+| `aks-nap` | AKS NAP | 요청 전 0개인 `workshop-nap` NodePool | VM allocation, bootstrap, node registration, image pull 포함 |
 | `vn2-ondemand` | VN2 OnDemand | 새 ACI container group 생성 경로 | net-new provisioning + image pull 포함 시간 확인 |
-| `vn2-standby-uncached` | StandbyPool uncached | warm UVM, 이미지 캐시 없음 | standby capacity 자체 효과 분리 |
+| `vn2-standby` | StandbyPool | warm UVM, benchmark image 미보장 | standby capacity 자체 효과 분리 |
 | `vn2-standby-cached` | StandbyPool cached | warm UVM + benchmark image cache | warm standby + cache 조합의 최고 성능 비교 |
 
 ### 네 시나리오가 구성되는 방식
 
-이 워크숍은 네 개의 AKS 클러스터를 만드는 것이 아닙니다. **하나의 AKS API server** 아래에 다음 세 가지 node path를 동시에 준비하고, benchmark Pod의 `nodeSelector`를 바꿔 같은 manifest와 같은 이미지가 어느 경로에서 실행될지 고정합니다.
+이 워크숍은 네 개의 AKS 클러스터를 만드는 것이 아닙니다. **하나의 AKS API server** 아래에 다음 세 가지 node path를 준비하고, benchmark Pod의 `nodeSelector`를 바꿔 같은 manifest와 같은 이미지가 어느 경로에서 실행될지 고정합니다.
 
-- `benchmark-path=aks`: 실제 AKS VM node
+- `benchmark-path=aks-nap`: benchmark 요청이 올 때 `workshop-nap`이 만드는 AKS VM node
 - `benchmark-path=ondemand`: `sandboxProviderType=OnDemand`인 VN2 virtual node
 - `benchmark-path=standby`: `sandboxProviderType=StandbyPool`인 VN2 virtual node
 
-`vn2-standby-uncached`와 `vn2-standby-cached`는 서로 다른 virtual node가 아닙니다. 둘 다 `benchmark-path=standby`를 사용하며, **Standby Pool에 준비된 compute만 있는지, compute와 benchmark image가 함께 준비되어 있는지**를 바꿔 측정합니다. 따라서 Image Cache는 다섯 번째 실행 환경이 아니라 StandbyPool 경로의 두 번째 준비 상태입니다.
+fixed system node에는 benchmark label을 붙이지 않습니다. 이 node는 두 VN2 infrastructure release를 계속 호스팅하고, NAP benchmark NodePool은 0개 node에서 시작합니다. `vn2-standby`와 `vn2-standby-cached`는 서로 다른 virtual node가 아니며 둘 다 `benchmark-path=standby`를 사용합니다.
 
-### 1. 일반 AKS node: 이미 실행 중인 VM에 Pod 배치
+### 1. AKS NAP: Pending Pod가 새 VM node를 생성
 
-일반 AKS 경로에서는 kube-scheduler가 Pod를 `Standard_D16s_v5` VM node에 배치합니다. VM, kubelet, 컨테이너 런타임과 노드 네트워크가 이미 실행 중이므로 Pod 생성 후에는 주로 스케줄링, 이미지 확인 또는 pull, 컨테이너 시작과 readiness 전환 시간이 측정됩니다.
+AKS NAP 경로는 `workshop-nap` NodePool에 node와 NodeClaim이 0개인 상태에서 시작합니다. `benchmark-path=aks-nap`을 선택하고 전용 taint를 tolerate하는 Pod가 Pending되면 NAP가 on-demand `Standard_D4s_v5` node 한 대를 만듭니다.
 
-- **준비 상태:** VM node가 항상 실행 중이며 워크숍 시작 전에 cluster capacity가 확보되어 있습니다.
-- **이미지 상태:** 이전 실행으로 이미지가 node에 남아 있으면 warm image cache 효과가 포함될 수 있습니다.
-- **지연 특성:** 새 VM이나 ACI sandbox를 만들지 않으므로 일반적으로 가장 짧은 Pod 시작 시간이 나옵니다.
-- **비용 특성:** Pod가 없어도 AKS VM이 실행되는 동안 node 비용이 계속 발생합니다.
-- **해석:** 이미 프로비저닝된 VM 기준선입니다. serverless burst 경로와 비용 조건이 다르므로 “가장 빠르니 항상 가장 경제적”이라고 해석하지 않습니다.
+- **준비 상태:** NAP node 0, NodeClaim 0이며 fixed system node에는 benchmark workload를 배치하지 않습니다.
+- **생성 흐름:** Pod Pending → VM allocation → bootstrap → kubelet registration → image pull → container Ready.
+- **SKU/용량:** `Standard_D4s_v5`, on-demand capacity, CPU limit 4로 최대 한 대만 허용합니다.
+- **reset:** 각 run 뒤 namespace를 제거하고 consolidation으로 node와 NodeClaim이 다시 0이 될 때까지 기다립니다.
+- **해석:** warm VM 기준선이 아니라 전체 AKS VM scale-out 시간입니다.
 
 ### 2. VN2 OnDemand: Pod 요청 시 새 ACI sandbox 생성
 
@@ -118,16 +122,16 @@ StandbyPool이 compute 준비 시간을 줄여도 새 capacity가 benchmark imag
 
 ### 경로별 차이 요약
 
-| 비교 관점 | AKS node | VN2 OnDemand | StandbyPool uncached | StandbyPool cached |
+| 비교 관점 | AKS NAP | VN2 OnDemand | StandbyPool | StandbyPool cached |
 | --- | --- | --- | --- | --- |
-| 실제 실행 compute | 이미 실행 중인 AKS VM | 요청 시 생성하는 ACI | 미리 준비한 ACI capacity | 미리 준비한 ACI capacity |
-| 요청 전 compute 상태 | VM Ready | 없음 | warm/running | warm/running |
-| 요청 전 image 상태 | node cache 상태에 따라 다름 | 기본적으로 pull 필요 | benchmark image 미보장 | benchmark image 사전 준비 요청 |
-| 시작 지연에 포함되는 주요 작업 | 스케줄링, image 확인/pull, container 시작 | ACI 할당, 초기화, 네트워크, image pull, container 시작 | ready capacity 획득, image pull, container 시작 | ready capacity 획득, container 시작 |
-| 유휴 비용 관점 | VM node 비용 유지 | ready pool 없음 | standby capacity 유지 | standby capacity와 cache 준비 유지 |
-| 이 워크숍의 측정 목적 | warm VM 기준선 | net-new serverless cold start | compute 사전 준비 효과 | compute + image 사전 준비 효과 |
+| 실제 실행 compute | 요청 시 생성하는 AKS VM | 요청 시 생성하는 ACI | 미리 준비한 ACI capacity | 미리 준비한 ACI capacity |
+| 요청 전 compute 상태 | NAP node/NodeClaim 0 | 없음 | warm/running | warm/running |
+| 요청 전 image 상태 | 새 node라 pull 필요 | 기본적으로 pull 필요 | benchmark image 미보장 | benchmark image 사전 준비 요청 |
+| 시작 지연에 포함되는 주요 작업 | VM allocation, bootstrap, registration, image pull, container 시작 | ACI 할당, 초기화, 네트워크, image pull, container 시작 | ready capacity 획득, image pull, container 시작 | ready capacity 획득, container 시작 |
+| 유휴 비용 관점 | benchmark VM은 0으로 축소 | ready pool 없음 | standby capacity 유지 | standby capacity와 cache 준비 유지 |
+| 이 워크숍의 측정 목적 | VM node scale-out | net-new serverless cold start | compute 사전 준비 효과 | compute + image 사전 준비 효과 |
 
-네 경로 모두 Kubernetes Pod API로 생성하지만 실제 compute lifecycle과 비용 모델은 다릅니다. 그러므로 **AKS와 VN2의 절대 시간 비교**, **OnDemand와 StandbyPool의 compute 준비 효과**, **uncached와 cached의 image 준비 효과**를 각각 분리해서 해석해야 합니다.
+네 경로 모두 Kubernetes Pod API로 생성하지만 실제 compute lifecycle과 비용 모델은 다릅니다. 그러므로 **AKS NAP와 VN2의 절대 시간 비교**, **OnDemand와 StandbyPool의 compute 준비 효과**, **기본 Standby와 cached의 image 준비 효과**를 각각 분리해서 해석해야 합니다.
 
 구현과 측정 절차는 [Module 03: 이중 VN2 설치와 standby pool 준비](docs/03-install-dual-vn2.md), [Module 05: StandbyPool과 Image Cache 측정](docs/05-standby-cache-benchmark.md), [Module 06: 결과 분석과 해석](docs/06-analyze-results.md)에서 이어집니다. 제품 개념은 Microsoft Learn의 [Virtual nodes on Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-virtual-nodes)와 [Standby pools for Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-standby-pool-overview)를 참고하세요.
 
@@ -147,7 +151,7 @@ StandbyPool이 compute 준비 시간을 줄여도 새 capacity가 benchmark imag
 
 Module 01에서 provider 등록, quota, VM SKU, Helm/Kubernetes 도구 버전을 다시 확인합니다.
 
-참가자 기본 노드 크기는 `Standard_D16s_v5` 입니다. live evidence 상 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline 을 같은 regular node에 함께 두면 이전의 더 작은 node 크기는 `Insufficient cpu` 로 막혔기 때문에, 이 워크숍은 한 대의 regular node만 유지하는 1-node architecture 를 그대로 두고 VM 크기만 올립니다.
+fixed system node 크기는 `Standard_D16s_v5`이고 두 VN2 infrastructure release와 cluster system Pod만 호스팅합니다. NAP benchmark NodePool은 `Standard_D4s_v5`를 고정하고 0개 node에서 시작합니다.
 
 ## 모듈 구성
 
@@ -155,10 +159,10 @@ Module 01에서 provider 등록, quota, VM SKU, Helm/Kubernetes 도구 버전을
 | --- | --- | ---: | --- |
 | Module 00 | 개요와 측정 계약 | 5분 | 비교 기준, 지표, 비용, cleanup 원칙 이해 |
 | Module 01 | 사전 검사와 참가 조건 확인 | 15분 | 도구, 권한, provider, feature, quota 확인 |
-| Module 02 | Azure 기반 환경 준비 | 30분 | RG, VNet, delegated subnet, NAT Gateway, AKS 준비 |
+| Module 02 | Azure 기반 환경 준비 | 30분 | UAMI, custom VNet, NAP-enabled AKS, `workshop-nap` 준비 |
 | Module 03 | 이중 VN2 설치 | 20분 | OnDemand/Standby release와 node label 준비 |
-| Module 04 | 기준선과 OnDemand 측정 | 25분 | `aks`, `vn2-ondemand` raw evidence 생성 |
-| Module 05 | StandbyPool과 Image Cache 측정 | 25분 | `vn2-standby-uncached`, `vn2-standby-cached` raw evidence 생성 |
+| Module 04 | AKS NAP와 OnDemand 측정 | 25분 | `aks-nap`, `vn2-ondemand` raw evidence 생성 |
+| Module 05 | StandbyPool과 Image Cache 측정 | 25분 | `vn2-standby`, `vn2-standby-cached` raw evidence 생성 |
 | Module 06 | 결과 분석 | 20분 | summary JSON/CSV/Markdown 생성 및 해석 |
 | Module 07 | 제약, 트러블슈팅, 정리 | 10분 | 오류 분류, 잔여 리소스 확인, 전체 cleanup |
 
@@ -177,7 +181,8 @@ Module 01에서 provider 등록, quota, VM SKU, Helm/Kubernetes 도구 버전을
 - [ ] Module 01에서 Owner 권한, provider 등록, 도구 버전, quota를 확인했다.
 - [ ] Module 02에서 AKS와 `cg` subnet, NAT Gateway, public IP를 준비했다.
 - [ ] Module 02와 Module 03에서 `results/workshop.env` 를 최신 값으로 저장했다.
-- [ ] Module 03에서 `benchmark-path=aks|ondemand|standby` 경로를 모두 준비했다.
+- [ ] Module 02에서 `workshop-nap` NodePool Ready와 node/NodeClaim 0개를 확인했다.
+- [ ] Module 03에서 fixed system node는 unlabeled 상태로 두고 `benchmark-path=ondemand|standby` virtual node를 준비했다.
 - [ ] Module 04와 Module 05에서 네 시나리오의 raw JSON evidence를 모두 만들었다.
 - [ ] Module 06에서 `results/summary.json`, `results/summary.csv`, `results/summary.md`를 생성했다.
 - [ ] 실패, timeout, fallback evidence를 삭제하지 않고 그대로 보관했다.

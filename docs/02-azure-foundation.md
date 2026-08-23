@@ -1,8 +1,8 @@
-# Module 02. Azure 기반 환경 준비
+# Module 02. AKS NAP 기반 환경 준비
 
 ## 목표
 
-워크숍에서 재현 가능한 측정을 위해 Korea Central에 고정된 주소 체계의 VNet, delegated `cg` subnet, Standard public IP, NAT Gateway, Azure CNI 기반 AKS, 그리고 이후 VN2 설치에 필요한 kubelet identity 권한을 준비합니다.
+Korea Central에 고정 주소 체계의 custom VNet, delegated `cg` subnet, Standard public IP와 NAT Gateway를 만들고, Azure CNI, Standard Load Balancer, user-assigned managed identity, NAP Auto 구성을 사용하는 AKS를 준비합니다. `Standard_D16s_v5` fixed system node는 cluster system Pod와 두 VN2 infrastructure release 전용으로 유지하고, benchmark는 0개 node에서 시작하는 `workshop-nap` NAP benchmark NodePool만 사용합니다.
 
 ## 예상 소요 시간
 
@@ -13,21 +13,21 @@
 - Module 01의 preflight가 성공했다.
 - `results/environment.json` 이 존재한다.
 - 사용할 subscription ID와 Azure location이 확정되었다.
-- 아직 workshop 리소스 그룹 이름과 네트워크 CIDR을 선언하지 않았다.
-- `results/workshop.env` 가 아직 없다면 이 모듈이 authoritative state file을 처음 만든다.
+- 아직 workshop 리소스 그룹과 `results/workshop.env` 가 없다.
 
 ## 진행 순서
 
-1. 고정된 이름/주소 범위와 동적 Kubernetes `1.34.x` 버전을 shell 변수로 선언합니다.
-2. `reserved`, `snet-aks`, `cg` subnet을 가진 VNet을 만들고 `cg` subnet에 delegation을 설정합니다.
-3. Standard static public IP와 NAT Gateway를 만들고 `cg` subnet에 연결합니다.
-4. Azure CNI 와 `Standard_D16s_v5` 를 사용해 AKS를 만듭니다.
-5. kubelet identity에 workshop RG 와 node RG 양쪽 Contributor 권한을 주고, 참가자 kubeconfig 와 `benchmark-path=aks` 라벨을 준비합니다.
-6. 성공한 값은 항상 `results/workshop.env` 에 shell-escaped export 로 저장합니다. `results/workshop.env is the authoritative workshop state`.
+1. 고정 이름, 주소 범위, system/NAP VM 크기와 지원되는 Kubernetes `1.34.x` 버전을 선언합니다.
+2. `reserved`, `snet-aks`, `cg` subnet과 `cg`용 NAT Gateway를 만듭니다.
+3. AKS용 user-assigned managed identity를 만들고 VNet 범위 `Network Contributor`를 부여합니다.
+4. custom VNet에 fixed system node 한 대와 NAP Auto를 사용하는 AKS를 만듭니다.
+5. kubelet identity 권한을 부여하고 `workshop-nap` AKSNodeClass/NodePool을 렌더링해 적용합니다.
+6. NodePool Ready와 NAP node/NodeClaim 0개를 확인합니다.
+7. 성공한 상태를 mode `600`의 `results/workshop.env`에 원자적으로 저장합니다.
 
 ### 1) 고정 변수와 지원되는 Kubernetes 1.34 패치 선택
 
-Module 01의 `results/environment.json` 이 이미 `Standard_D16s_v5` 와 `koreacentral` 을 검증했더라도, AKS 생성 직전에 실제 지원되는 `1.34.x` 패치 버전을 다시 조회해야 합니다.
+Module 01의 `results/environment.json` 이 이미 `Standard_D16s_v5` 와 `koreacentral` 을 검증했더라도 AKS 생성 직전에 실제 지원 버전을 다시 조회합니다.
 
 ```bash
 cd ~/aci-vn2-performance-workshop
@@ -38,19 +38,25 @@ WORKSHOP_STATE="results/workshop.env"
 persist_workshop_state() {
   local STATE_TMP
   STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
-  umask 077
-  {
-    printf 'export LOCATION=%q\n' "$LOCATION"
-    printf 'export RG=%q\n' "$RG"
-    printf 'export VNET=%q\n' "$VNET"
-    printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
-    printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
-    printf 'export NAT_NAME=%q\n' "$NAT_NAME"
-    printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
-    printf 'export AKS=%q\n' "$AKS"
-    printf 'export VM_SIZE=%q\n' "$VM_SIZE"
-    printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
-  } >"$STATE_TMP"
+  (
+    umask 077
+    {
+      printf 'export LOCATION=%q\n' "$LOCATION"
+      printf 'export RG=%q\n' "$RG"
+      printf 'export VNET=%q\n' "$VNET"
+      printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
+      printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
+      printf 'export NAT_NAME=%q\n' "$NAT_NAME"
+      printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
+      printf 'export AKS=%q\n' "$AKS"
+      printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+      printf 'export AKS_IDENTITY=%q\n' "$AKS_IDENTITY"
+      printf 'export AKS_IDENTITY_ID=%q\n' "$AKS_IDENTITY_ID"
+      printf 'export NAP_VM_SIZE=%q\n' "$NAP_VM_SIZE"
+      printf 'export NAP_NODEPOOL=%q\n' "$NAP_NODEPOOL"
+      printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
+    } >"$STATE_TMP"
+  )
   chmod 600 "$STATE_TMP"
   mv "$STATE_TMP" "$WORKSHOP_STATE"
 }
@@ -64,7 +70,11 @@ persist_workshop_state() {
   NAT_NAME="nat-vn2-bench"
   NAT_PIP_NAME="pip-vn2-bench"
   AKS="aks-vn2-bench"
-  VM_SIZE="${VM_SIZE:-Standard_D16s_v5}"
+  AKS_IDENTITY="id-aks-vn2-bench"
+  AKS_IDENTITY_ID=""
+  VM_SIZE="Standard_D16s_v5"
+  NAP_VM_SIZE="Standard_D4s_v5"
+  NAP_NODEPOOL="workshop-nap"
 
   K8S_VERSION="$(az aks get-versions \
     --location "$LOCATION" \
@@ -76,25 +86,21 @@ persist_workshop_state() {
   fi
 
   persist_workshop_state
-  printf 'Using Kubernetes version: %s\n' "$K8S_VERSION"
 )
 
 source "$WORKSHOP_STATE"
-printf 'Saved workshop state to %s\n' "$WORKSHOP_STATE"
+printf 'Using Kubernetes version %s, system VM %s, NAP VM %s\n' \
+  "$K8S_VERSION" "$VM_SIZE" "$NAP_VM_SIZE"
 ```
 
-여기서는 `values[].version` 이 minor (`1.34`) 까지만 주어진다는 점 때문에 `patchVersions` 객체에서 실제 `1.34.x` 키를 골라야 합니다. `jq` 는 minor 자체가 없을 때 빈 문자열을 돌려주고, `1.34.9` 와 `1.34.10` 도 숫자 기준으로 정렬해 가장 최신 patch를 고릅니다. `K8S_VERSION` 이 비어 있으면 임의로 `1.33` 이나 `1.35` 를 넣지 말고, Korea Central 에서 실제 `1.34.x` patch가 반환될 때까지 멈추는 것이 맞습니다. 한 개 regular node 위에 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline을 같이 올리려면 `Standard_D16s_v5` 한 대를 유지한 1-node architecture 가 현재 승인된 최소선입니다.
+`NAP_VM_SIZE`는 manifest의 `Standard_D4s_v5`와 일치해야 합니다. 임의의 SKU로 바꾸면 이 워크숍이 측정하려는 고정된 0→1 VM provisioning 경로가 달라집니다. `results/workshop.env is the authoritative workshop state` 이므로 새 Cloud Shell에서는 항상 `source "$WORKSHOP_STATE"`로 복구합니다.
 
-이 첫 저장 직후부터 `results/workshop.env` 는 authoritative state file 입니다. 새 Cloud Shell 에서 다시 시작해야 하면 저장소 루트에서 `source "$WORKSHOP_STATE"` 로 같은 값을 복구한 뒤 다음 단계로 넘어갑니다.
-
-### 2) 고정 네트워크와 NAT Gateway 만들기
-
-주소 범위는 문서와 테스트, 이후 모듈이 모두 공유하므로 그대로 사용합니다.
+### 2) custom VNet, delegated subnet, NAT Gateway 만들기
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
 if [[ ! -f "$WORKSHOP_STATE" ]]; then
-  printf 'Missing %s. Run step 1 first so the workshop state can be recovered safely.\n' "$WORKSHOP_STATE" >&2
+  printf 'Missing %s. Run step 1 first.\n' "$WORKSHOP_STATE" >&2
   exit 1
 fi
 source "$WORKSHOP_STATE"
@@ -130,31 +136,95 @@ source "$WORKSHOP_STATE"
   az network vnet subnet update -g "$RG" --vnet-name "$VNET" \
     -n "$CG_SUBNET" \
     --nat-gateway "$NAT_NAME"
-
-  az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$CG_SUBNET" \
-    --query '{name:name,delegations:delegations[].serviceName,natGateway:natGateway.id}' \
-    --output json
 )
 ```
 
-`cg` subnet은 반드시 `Microsoft.ContainerInstance/containerGroups` 로 delegation 되어 있어야 하며, NAT Gateway가 연결되어 있어야 ACI 기반 경로의 outbound 가 일관됩니다.
+AKS subnet과 ACI `cg` subnet은 분리합니다. `cg`만 `Microsoft.ContainerInstance/containerGroups`에 위임하고 NAT Gateway를 연결합니다.
 
-### 3) Azure CNI 기반 AKS 만들기
+### 3) AKS용 user-assigned managed identity와 VNet 권한 준비
+
+NAP와 custom VNet을 함께 사용하므로 AKS 생성 전에 identity를 만들고 workshop VNet 전체 범위에 `Network Contributor`를 부여합니다.
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
-if [[ ! -f "$WORKSHOP_STATE" ]]; then
-  printf 'Missing %s. Recover the exact workshop state before creating AKS.\n' "$WORKSHOP_STATE" >&2
-  exit 1
-fi
+
+persist_workshop_state() {
+  local STATE_TMP
+  STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
+  (
+    umask 077
+    {
+      printf 'export LOCATION=%q\n' "$LOCATION"
+      printf 'export RG=%q\n' "$RG"
+      printf 'export VNET=%q\n' "$VNET"
+      printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
+      printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
+      printf 'export NAT_NAME=%q\n' "$NAT_NAME"
+      printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
+      printf 'export AKS=%q\n' "$AKS"
+      printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+      printf 'export AKS_IDENTITY=%q\n' "$AKS_IDENTITY"
+      printf 'export AKS_IDENTITY_ID=%q\n' "$AKS_IDENTITY_ID"
+      printf 'export NAP_VM_SIZE=%q\n' "$NAP_VM_SIZE"
+      printf 'export NAP_NODEPOOL=%q\n' "$NAP_NODEPOOL"
+      printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
+    } >"$STATE_TMP"
+  )
+  chmod 600 "$STATE_TMP"
+  mv "$STATE_TMP" "$WORKSHOP_STATE"
+}
+
 source "$WORKSHOP_STATE"
 
 ( set -euo pipefail
-  AKS_SUBNET_ID="$(az network vnet subnet show -g "$RG" \
+  az identity create \
+    --resource-group "$RG" \
+    --name "$AKS_IDENTITY"
+
+  AKS_IDENTITY_ID="$(az identity show \
+    --resource-group "$RG" \
+    --name "$AKS_IDENTITY" \
+    --query id -o tsv)"
+  AKS_IDENTITY_PRINCIPAL_ID="$(az identity show \
+    --resource-group "$RG" \
+    --name "$AKS_IDENTITY" \
+    --query principalId -o tsv)"
+  VNET_ID="$(az network vnet show \
+    --resource-group "$RG" \
+    --name "$VNET" \
+    --query id -o tsv)"
+
+  if [[ -z "$AKS_IDENTITY_ID" || -z "$AKS_IDENTITY_PRINCIPAL_ID" || -z "$VNET_ID" ]]; then
+    printf 'AKS identity or VNet ID could not be resolved.\n' >&2
+    exit 1
+  fi
+
+  az role assignment create \
+    --assignee-object-id "$AKS_IDENTITY_PRINCIPAL_ID" \
+    --assignee-principal-type ServicePrincipal \
+    --role "Network Contributor" \
+    --scope "$VNET_ID"
+
+  persist_workshop_state
+)
+
+source "$WORKSHOP_STATE"
+```
+
+`AKS_IDENTITY_ID`는 identity의 ARM resource ID이고, role assignment의 assignee는 `principalId`입니다. 두 값을 바꾸어 사용하지 않습니다.
+
+### 4) NAP Auto와 fixed D16 system node로 AKS 만들기
+
+```bash
+WORKSHOP_STATE="results/workshop.env"
+source "$WORKSHOP_STATE"
+
+( set -euo pipefail
+  AKS_SUBNET_ID="$(az network vnet subnet show \
+    --resource-group "$RG" \
     --vnet-name "$VNET" \
-    -n "$AKS_SUBNET" \
-    --query id \
-    -o tsv)"
+    --name "$AKS_SUBNET" \
+    --query id -o tsv)"
   if [[ -z "$AKS_SUBNET_ID" ]]; then
     printf 'AKS subnet ID could not be resolved.\n' >&2
     exit 1
@@ -162,6 +232,7 @@ source "$WORKSHOP_STATE"
 
   az aks create -g "$RG" -n "$AKS" \
     --location "$LOCATION" \
+    --nodepool-name system \
     --node-count 1 \
     --node-vm-size "$VM_SIZE" \
     --kubernetes-version "$K8S_VERSION" \
@@ -169,44 +240,34 @@ source "$WORKSHOP_STATE"
     --vnet-subnet-id "$AKS_SUBNET_ID" \
     --service-cidr 172.16.0.0/16 \
     --dns-service-ip 172.16.0.10 \
-    --enable-managed-identity \
+    --load-balancer-sku standard \
+    --node-provisioning-mode Auto \
+    --node-provisioning-default-pools None \
+    --assign-identity "$AKS_IDENTITY_ID" \
     --generate-ssh-keys
 )
 ```
 
-여기서 `--network-plugin azure` 는 필수입니다. 이 워크숍은 Azure CNI가 아닌 AKS 구성을 지원하지 않습니다. VNet 주소 공간이 `10.0.0.0/8` 이므로 AKS service CIDR 과 DNS service IP 는 그 범위 밖의 private 대역(`172.16.0.0/16`, `172.16.0.10`)을 유지해야 겹침이 없습니다.
+`--node-provisioning-default-pools None`은 AKS가 기본 NAP NodePool을 만들지 않게 합니다. fixed system node는 `Standard_D16s_v5` 한 대이며 benchmark routing label을 갖지 않습니다. benchmark Pod는 이후 `workshop-nap`만 선택합니다.
 
-### 4) kubelet identity 권한 부여, kubeconfig 가져오기, 일반 노드 라벨링
+### 5) kubelet identity 권한과 kubeconfig 준비
 
-Module 03부터는 AKS kubelet identity가 workshop resource group 과 node resource group 양쪽에 접근해야 합니다. query 문자열 `identityProfile.kubeletidentity.objectId` 와 `nodeResourceGroup` 을 그대로 사용하세요.
+VN2가 workshop RG와 AKS node RG의 리소스를 사용할 수 있도록 kubelet identity에 기존 Contributor 역할을 부여합니다.
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
-if [[ ! -f "$WORKSHOP_STATE" ]]; then
-  printf 'Missing %s. Recover the exact workshop state before finishing AKS setup.\n' "$WORKSHOP_STATE" >&2
-  exit 1
-fi
 source "$WORKSHOP_STATE"
 
 ( set -euo pipefail
   KUBELET_OBJECT_ID="$(az aks show -g "$RG" -n "$AKS" \
     --query identityProfile.kubeletidentity.objectId \
     -o tsv)"
-  if [[ -z "$KUBELET_OBJECT_ID" ]]; then
-    printf 'AKS kubelet identityProfile.kubeletidentity.objectId could not be resolved.\n' >&2
-    exit 1
-  fi
-
   NODE_RG="$(az aks show -g "$RG" -n "$AKS" --query nodeResourceGroup -o tsv)"
-  if [[ -z "$NODE_RG" ]]; then
-    printf 'AKS nodeResourceGroup could not be resolved.\n' >&2
-    exit 1
-  fi
-
   NODE_RG_ID="$(az group show -n "$NODE_RG" --query id -o tsv)"
   WORKSHOP_RG_ID="$(az group show -n "$RG" --query id -o tsv)"
-  if [[ -z "$NODE_RG_ID" || -z "$WORKSHOP_RG_ID" ]]; then
-    printf 'Resource group IDs for kubelet role assignment could not be resolved.\n' >&2
+
+  if [[ -z "$KUBELET_OBJECT_ID" || -z "$NODE_RG_ID" || -z "$WORKSHOP_RG_ID" ]]; then
+    printf 'kubelet identity or resource group ID could not be resolved.\n' >&2
     exit 1
   fi
 
@@ -222,44 +283,117 @@ source "$WORKSHOP_STATE"
     --role Contributor \
     --scope "$WORKSHOP_RG_ID"
 
-  az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
+  az aks get-credentials \
+    --resource-group "$RG" \
+    --name "$AKS" \
+    --overwrite-existing
 
-  REGULAR_NODE="$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')"
-  if [[ -z "$REGULAR_NODE" ]]; then
-    printf 'No AKS node name was returned by kubectl.\n' >&2
+  kubectl get crd \
+    aksnodeclasses.karpenter.azure.com \
+    nodepools.karpenter.sh \
+    nodeclaims.karpenter.sh
+)
+```
+
+NAP CRD가 없거나 kubelet identity 역할이 실패하면 manifest를 적용하지 말고 해당 실패를 먼저 해결합니다.
+
+### 6) 전용 AKSNodeClass와 NodePool 렌더링, 적용, 검증
+
+template에서 바뀌는 값은 AKS subnet ID 하나뿐입니다.
+
+```bash
+WORKSHOP_STATE="results/workshop.env"
+
+persist_workshop_state() {
+  local STATE_TMP
+  STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
+  (
+    umask 077
+    {
+      printf 'export LOCATION=%q\n' "$LOCATION"
+      printf 'export RG=%q\n' "$RG"
+      printf 'export VNET=%q\n' "$VNET"
+      printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
+      printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
+      printf 'export NAT_NAME=%q\n' "$NAT_NAME"
+      printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
+      printf 'export AKS=%q\n' "$AKS"
+      printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+      printf 'export AKS_IDENTITY=%q\n' "$AKS_IDENTITY"
+      printf 'export AKS_IDENTITY_ID=%q\n' "$AKS_IDENTITY_ID"
+      printf 'export NAP_VM_SIZE=%q\n' "$NAP_VM_SIZE"
+      printf 'export NAP_NODEPOOL=%q\n' "$NAP_NODEPOOL"
+      printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
+    } >"$STATE_TMP"
+  )
+  chmod 600 "$STATE_TMP"
+  mv "$STATE_TMP" "$WORKSHOP_STATE"
+}
+
+source "$WORKSHOP_STATE"
+
+( set -euo pipefail
+  AKS_SUBNET_ID="$(az network vnet subnet show \
+    --resource-group "$RG" \
+    --vnet-name "$VNET" \
+    --name "$AKS_SUBNET" \
+    --query id -o tsv)"
+  if [[ -z "$AKS_SUBNET_ID" ]]; then
+    printf 'AKS subnet ID could not be resolved for the NAP manifest.\n' >&2
     exit 1
   fi
 
-  kubectl label node "$REGULAR_NODE" benchmark-path=aks --overwrite
-  kubectl get nodes --show-labels
+  sed "s|@@AKS_SUBNET_ID@@|$AKS_SUBNET_ID|g" \
+    manifests/nap-workshop-nodepool.yaml \
+    > results/nap-workshop.yaml
+
+  if grep -Fq '@@AKS_SUBNET_ID@@' results/nap-workshop.yaml; then
+    printf 'NAP manifest rendering left an unresolved subnet token.\n' >&2
+    exit 1
+  fi
+
+  kubectl apply -f results/nap-workshop.yaml
+  kubectl wait --for=condition=Ready nodepool/"$NAP_NODEPOOL" --timeout=10m
+  kubectl get nodepool workshop-nap
+  kubectl get nodes -l karpenter.sh/nodepool=workshop-nap
+
+  ./scripts/check-nap-capacity.sh \
+    --name "$NAP_NODEPOOL" \
+    --expect-nodes 0 \
+    --expect-nodeclaims 0 \
+    --timeout-seconds 1200 \
+    --interval-seconds 15
+
+  persist_workshop_state
 )
 
 source "$WORKSHOP_STATE"
 ```
 
-이제 참가자 kubeconfig 는 현재 AKS 를 가리키고, 최소 한 개의 일반 노드에 `benchmark-path=aks` 가 존재해야 합니다.
+정상 상태는 NodePool Ready이면서 `workshop-nap` node와 NodeClaim이 모두 0개인 상태입니다. 이 단계에서는 benchmark Pod를 만들지 않으므로 D4 VM 비용이 아직 발생하지 않습니다.
 
 ## 완료 체크포인트
 
-- `RG`, `VNET`, `AKS_SUBNET`, `CG_SUBNET`, `AKS`, `VM_SIZE`, `K8S_VERSION` 값이 모두 결정되었다.
-- `results/workshop.env` 가 `chmod 600` 상태로 생성되었고, 같은 값을 새 Cloud Shell 에서 `source` 할 수 있다.
-- 리소스 그룹, NAT Gateway, Standard public IP, VNet, 세 subnet이 모두 생성되었다.
-- `cg` subnet에 delegation과 NAT Gateway 연결이 적용되었다.
-- `az aks create` 가 성공하고 `kubectl get nodes` 가 응답한다.
-- AKS가 Azure CNI 경로로 생성되었음을 확인했다.
-- kubelet identity가 node RG 와 workshop RG 양쪽에 Contributor 권한을 받았다.
-- 일반 AKS 노드에 `benchmark-path=aks` 라벨이 적용되었다.
-- 다음 모듈에서는 메모 대신 `results/workshop.env` 를 authoritative state 로 사용한다.
+- `RG`, `VNET`, `AKS_SUBNET`, `CG_SUBNET`, `AKS`, `VM_SIZE`, `K8S_VERSION`이 결정되었다.
+- `AKS_IDENTITY`, `AKS_IDENTITY_ID`, `NAP_VM_SIZE`, `NAP_NODEPOOL`이 `results/workshop.env`에 하나씩 저장되었다.
+- user-assigned managed identity가 VNet 범위 `Network Contributor`를 받았다.
+- AKS가 Azure CNI, Standard Load Balancer, NAP Auto, default pools None으로 생성되었다.
+- fixed system node는 `Standard_D16s_v5` 한 대이고 benchmark label이 없다.
+- kubelet identity가 node RG와 workshop RG 양쪽에 Contributor 권한을 받았다.
+- `AKSNodeClass/workshop-nap`과 `NodePool/workshop-nap`이 적용되고 Ready이다.
+- NAP checker가 node 0, NodeClaim 0을 반환했다.
+- `results/workshop.env`가 mode `600`이며 fresh Cloud Shell에서 source할 수 있다.
 
 ## 문제 해결
 
-| 증상 | 확인할 것 | 확인 명령 | 조치 |
-| --- | --- | --- | --- |
-| `No supported Kubernetes 1.34.x version` | Korea Central 의 `1.34` patch map | `az aks get-versions --location koreacentral --query "values[?version=='1.34'].patchVersions | [0]" --output json \| jq -r 'if type=="object" then (keys_unsorted \| map(select(startswith("1.34."))) \| sort_by(split(".")\|map(tonumber)) \| last // "") else "" end'` | 다른 버전을 강제로 넣지 말고, 결과가 비어 있으면 해당 minor 가 아직 없다는 뜻으로 보고 교육용 구독/지역 상태를 확인하거나 `1.34.x` 가 다시 노출될 때까지 대기 |
-| `cg` subnet delegation 누락 | delegation 이름 | `az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$CG_SUBNET" --query delegations[].serviceName -o tsv` | `--delegations Microsoft.ContainerInstance/containerGroups` 를 다시 적용 |
-| VN2 outbound 오류가 걱정됨 | NAT 연결 여부 | `az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$CG_SUBNET" --query natGateway.id -o tsv` | `az network vnet subnet update ... --nat-gateway "$NAT_NAME"` 재실행 |
-| `az aks create` 가 quota/SKU 로 실패함 | Module 01 결과 | `cat results/environment.json` | preflight를 다시 실행하고 `Standard_D16s_v5` headroom 을 먼저 해결 |
-| kubelet role assignment 가 실패함 | kubelet identity 값 | `az aks show -g "$RG" -n "$AKS" --query '{kubelet:identityProfile.kubeletidentity.objectId,nodeRg:nodeResourceGroup}' -o json` | 값이 비어 있지 않은지 확인 후 두 scope 모두에 Contributor 재부여 |
+| 증상 | 확인 명령 | 조치 |
+| --- | --- | --- |
+| identity role assignment 실패 | `az identity show -g "$RG" -n "$AKS_IDENTITY" --query '{id:id,principalId:principalId}' -o json` | ARM ID와 principal ID를 혼용하지 않았는지 확인하고 VNet scope 역할을 다시 부여 |
+| NAP 옵션이 인식되지 않음 | `az version` | Azure CLI 2.76.0 이상으로 갱신하고 Module 01 preflight 재실행 |
+| AKS 생성이 network 권한으로 실패 | `az role assignment list --assignee-object-id "$AKS_IDENTITY_PRINCIPAL_ID" --scope "$VNET_ID" -o table` | cluster 생성 전에 UAMI의 VNet `Network Contributor` 전파를 확인 |
+| NAP CRD가 없음 | `kubectl get crd \| grep karpenter` | NAP Auto cluster 생성이 성공했는지 확인하고 임의 CRD를 수동 설치하지 않음 |
+| NodePool이 NotReady | `kubectl get nodepool workshop-nap -o yaml` | AKS subnet ID, SKU 요구사항, controller condition을 확인 |
+| 초기 node/NodeClaim이 0이 아님 | `kubectl get nodes,nodeclaims -l karpenter.sh/nodepool=workshop-nap` | 남은 workload를 제거하고 consolidation 완료 전 다음 모듈로 진행하지 않음 |
 
 ## 이전/다음
 

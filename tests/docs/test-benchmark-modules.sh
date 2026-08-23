@@ -253,7 +253,8 @@ for snippet in (
     '\n  *)\n',
     'RC=2 can also mean the internal standby pool pre-run or post-run check reported degraded health, so the current run may not have new raw JSON.',
     'RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.',
-    'check_pool_state "standby healthy check" 5',
+    'Before retrying vn2-standby-cached, follow the cached retry phase in section 8 to re-apply the Image Cache request and recycle the same pool 5 → 0 → 5.',
+    'A healthy running 5 alone is not sufficient cached retry preparation.',
     'archive only any paths that actually exist for this scenario',
 ):
     if snippet not in cached_case:
@@ -309,7 +310,7 @@ for step in baseline_restore_steps:
     previous_index = index
 
 cached_retry_match = re.search(
-    r'# If vn2-standby-cached failed:\n(.*?)\n```',
+    r'# If vn2-standby-cached failed:\n(.*?)\n## 완료 체크포인트',
     text05,
     re.S,
 )
@@ -317,7 +318,22 @@ if not cached_retry_match:
     raise SystemExit('docs/05-standby-cache-benchmark.md is missing the isolated cached retry block')
 cached_retry = cached_retry_match.group(1)
 cached_retry_steps = (
-    '# check_pool_state "cached pre-run healthy check" 5',
+    '# Retry order: if both scenarios failed, finish the vn2-standby retry before starting this cached retry.',
+    '# kubectl create namespace vn2-image-cache --dry-run=client -o yaml | kubectl apply -f -',
+    '# kubectl apply -f manifests/image-cache-pod.yaml',
+    '# kubectl get pod -n vn2-image-cache vn2-benchmark-image-cache -o yaml',
+    '# check_pool_state "cached retry starting healthy check" 5',
+    '# az standby-container-group-pool update \\\n'
+    '#   -g "$RG" -n "$STANDBY_POOL" \\\n'
+    '#   --max-ready-capacity 0 \\\n'
+    '#   --refill-policy always',
+    '# check_pool_state "cached retry recycle-to-zero check" 0',
+    '# az standby-container-group-pool update \\\n'
+    '#   -g "$RG" -n "$STANDBY_POOL" \\\n'
+    '#   --max-ready-capacity 5 \\\n'
+    '#   --refill-policy always',
+    '# check_pool_state "cached retry refill check" 5',
+    '# check_pool_state "cached retry pre-run healthy check" 5',
     '# archive_failed_attempts vn2-standby-cached',
     '# ./scripts/run-benchmark.sh \\\n'
     '#   --scenario vn2-standby-cached',
@@ -332,8 +348,6 @@ for step in cached_retry_steps:
     previous_index = index
 if 'kubectl delete -f manifests/image-cache-pod.yaml' in cached_retry:
     raise SystemExit('docs/05-standby-cache-benchmark.md cached retry must preserve the Image Cache request')
-if '--max-ready-capacity' in cached_retry:
-    raise SystemExit('docs/05-standby-cache-benchmark.md cached retry must preserve the cached pool instead of recycling it')
 
 if text04.index("--scenario aks-nap") > text04.index("--scenario vn2-ondemand"):
     raise SystemExit("docs/04-baseline-ondemand-benchmark.md must run aks-nap before vn2-ondemand")

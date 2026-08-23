@@ -285,11 +285,12 @@ case "$CACHED_RC" in
     printf 'RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.\n' >&2
     printf 'If the collector failed after sample creation, raw JSON and diagnostics already exist for this scenario.\n' >&2
     printf 'RC=2 can also mean the internal standby pool pre-run or post-run check reported degraded health, so the current run may not have new raw JSON.\n' >&2
-    printf 'Inspect existing evidence, then run check_pool_state "standby healthy check" 5 before retrying only vn2-standby-cached.\n' >&2
+    printf 'Inspect existing evidence. Before retrying vn2-standby-cached, follow the cached retry phase in section 8 to re-apply the Image Cache request and recycle the same pool 5 → 0 → 5.\n' >&2
     ;;
   3)
     printf 'RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.\n' >&2
-    printf 'If results/workshop.env was restored in a fresh Cloud Shell, run check_pool_state "standby healthy check" 5, recover/refill the pool, archive only any paths that actually exist for this scenario, and retry only vn2-standby-cached.\n' >&2
+    printf 'If results/workshop.env was restored in a fresh Cloud Shell, recover/refill the pool, then follow the full cached retry phase in section 8 and archive only any paths that actually exist for this scenario.\n' >&2
+    printf 'A healthy running 5 alone is not sufficient cached retry preparation.\n' >&2
     ;;
   *)
     printf 'Unexpected vn2-standby-cached benchmark failure RC=%s\n' "$CACHED_RC" >&2
@@ -308,7 +309,7 @@ find results/diagnostics -maxdepth 2 -type f -path '*/vn2-standby-cached-run-*/*
 
 ### 8) 실패한 standby scenario만 archive하고 재실행
 
-Run the archive/rerun example only for the standby scenario that failed. Do not archive or rerun a standby scenario that already succeeded. Image Cache 요청을 적용한 뒤 `vn2-standby` baseline을 재시도하려면 cache 요청을 삭제하고 같은 pool을 5 → 0 → 5로 다시 recycle해야 합니다. 각 check가 0일 때만 다음 명령으로 진행합니다. `vn2-standby-cached` 재시도에서는 cache 요청을 유지합니다.
+Run the archive/rerun example only for the standby scenario that failed. Do not archive or rerun a standby scenario that already succeeded. Retry phase/order rule은 측정 순서와 같습니다. 두 scenario가 모두 실패했다면 `vn2-standby` retry를 먼저 끝낸 뒤 cached retry phase를 시작합니다. baseline recovery는 cache 요청을 삭제하고 uncached capacity를 다시 만들기 때문에, 모든 `vn2-standby-cached` retry는 현재 상태를 cached로 간주하지 않고 Image Cache 요청을 다시 apply한 뒤 같은 pool을 5 → 0 → 5로 recycle합니다. 각 check가 0일 때만 다음 명령으로 진행합니다.
 
 ```bash
 # Example: rerun only the failed standby scenario after evidence review and any pool recovery.
@@ -329,7 +330,7 @@ Run the archive/rerun example only for the standby scenario that failed. Do not 
 # check_pool_state "baseline retry pre-run healthy check" 5
 ```
 
-baseline restore check가 모두 성공한 뒤 기존 baseline evidence를 archive하고 `vn2-standby`만 다시 실행합니다.
+baseline restore check가 모두 성공한 뒤 기존 baseline evidence를 archive하고 `vn2-standby`만 다시 실행합니다. 두 scenario가 모두 실패했다면 이 baseline retry가 성공한 뒤에만 아래 cached retry phase로 이동합니다.
 
 ```bash
 # archive_failed_attempts vn2-standby
@@ -341,11 +342,31 @@ baseline restore check가 모두 성공한 뒤 기존 baseline evidence를 archi
 #   --output-dir results
 ```
 
-cached retry는 Image Cache 요청과 cached UVM set을 유지한 채 health만 다시 확인합니다.
+cached retry는 이전 cached UVM set이나 health check만 재사용하지 않습니다. baseline retry 수행 여부와 관계없이 Image Cache request를 ensure하고 같은 `$STANDBY_POOL`을 5 → 0 → 5로 다시 recycle하여 cached capacity를 rebuild합니다.
 
 ```bash
 # If vn2-standby-cached failed:
-# check_pool_state "cached pre-run healthy check" 5
+# Retry order: if both scenarios failed, finish the vn2-standby retry before starting this cached retry.
+# kubectl create namespace vn2-image-cache --dry-run=client -o yaml | kubectl apply -f -
+# kubectl apply -f manifests/image-cache-pod.yaml
+# kubectl get pod -n vn2-image-cache vn2-benchmark-image-cache -o yaml
+# check_pool_state "cached retry starting healthy check" 5
+# az standby-container-group-pool update \
+#   -g "$RG" -n "$STANDBY_POOL" \
+#   --max-ready-capacity 0 \
+#   --refill-policy always
+# check_pool_state "cached retry recycle-to-zero check" 0
+# az standby-container-group-pool update \
+#   -g "$RG" -n "$STANDBY_POOL" \
+#   --max-ready-capacity 5 \
+#   --refill-policy always
+# check_pool_state "cached retry refill check" 5
+# check_pool_state "cached retry pre-run healthy check" 5
+```
+
+cached rebuild check가 모두 성공한 뒤 기존 cached evidence를 archive하고 `vn2-standby-cached`만 다시 실행합니다.
+
+```bash
 # archive_failed_attempts vn2-standby-cached
 # ./scripts/run-benchmark.sh \
 #   --scenario vn2-standby-cached \

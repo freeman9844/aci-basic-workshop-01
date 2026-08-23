@@ -49,10 +49,11 @@ required_prereq = [
     "5 warm standby instances while 5 benchmark Pods are active or refilling",
     "SP_OBJECT_ID=\"$(az ad sp list",
     "test -n \"$SP_OBJECT_ID\"",
-    "./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5",
+    "./scripts/preflight.sh --location koreacentral --vm-size Standard_D16s_v5",
     "cat results/environment.json",
     "Preflight checks passed.",
     "subshell keeps the interactive parent Cloud Shell safe",
+    "regional vCPU headroom is 15; need at least 16",
 ]
 
 required_foundation = [
@@ -63,7 +64,11 @@ required_foundation = [
     "VNET=\"vnet-vn2-bench\"",
     "AKS_SUBNET=\"snet-aks\"",
     "CG_SUBNET=\"cg\"",
-    "VM_SIZE=\"${VM_SIZE:-Standard_D8s_v5}\"",
+    "Azure CNI 와 `Standard_D16s_v5` 를 사용해 AKS를 만듭니다.",
+    "Module 01의 `results/environment.json` 이 이미 `Standard_D16s_v5` 와 `koreacentral` 을 검증했더라도",
+    "VM_SIZE=\"${VM_SIZE:-Standard_D16s_v5}\"",
+    "한 개 regular node 위에 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline을 같이 올리려면",
+    "`Standard_D16s_v5` 한 대를 유지한 1-node architecture",
     "--query \"values[?version=='1.34'].patchVersions | [0]\"",
     "jq -r 'if type==\"object\" then (keys_unsorted | map(select(startswith(\"1.34.\"))) | sort_by(split(\".\")|map(tonumber)) | last // \"\") else \"\" end'",
     "test -n \"$K8S_VERSION\"",

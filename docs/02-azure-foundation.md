@@ -21,13 +21,13 @@
 1. 고정된 이름/주소 범위와 동적 Kubernetes `1.34.x` 버전을 shell 변수로 선언합니다.
 2. `reserved`, `snet-aks`, `cg` subnet을 가진 VNet을 만들고 `cg` subnet에 delegation을 설정합니다.
 3. Standard static public IP와 NAT Gateway를 만들고 `cg` subnet에 연결합니다.
-4. Azure CNI 와 `Standard_D8s_v5` 를 사용해 AKS를 만듭니다.
+4. Azure CNI 와 `Standard_D16s_v5` 를 사용해 AKS를 만듭니다.
 5. kubelet identity에 workshop RG 와 node RG 양쪽 Contributor 권한을 주고, 참가자 kubeconfig 와 `benchmark-path=aks` 라벨을 준비합니다.
 6. 성공한 값은 항상 `results/workshop.env` 에 shell-escaped export 로 저장합니다. `results/workshop.env is the authoritative workshop state`.
 
 ### 1) 고정 변수와 지원되는 Kubernetes 1.34 패치 선택
 
-Module 01의 `results/environment.json` 이 이미 `Standard_D8s_v5` 와 `koreacentral` 을 검증했더라도, AKS 생성 직전에 실제 지원되는 `1.34.x` 패치 버전을 다시 조회해야 합니다.
+Module 01의 `results/environment.json` 이 이미 `Standard_D16s_v5` 와 `koreacentral` 을 검증했더라도, AKS 생성 직전에 실제 지원되는 `1.34.x` 패치 버전을 다시 조회해야 합니다.
 
 ```bash
 cd ~/aci-vn2-performance-workshop
@@ -64,7 +64,7 @@ persist_workshop_state() {
   NAT_NAME="nat-vn2-bench"
   NAT_PIP_NAME="pip-vn2-bench"
   AKS="aks-vn2-bench"
-  VM_SIZE="${VM_SIZE:-Standard_D8s_v5}"
+  VM_SIZE="${VM_SIZE:-Standard_D16s_v5}"
 
   K8S_VERSION="$(az aks get-versions \
     --location "$LOCATION" \
@@ -83,7 +83,7 @@ source "$WORKSHOP_STATE"
 printf 'Saved workshop state to %s\n' "$WORKSHOP_STATE"
 ```
 
-여기서는 `values[].version` 이 minor (`1.34`) 까지만 주어진다는 점 때문에 `patchVersions` 객체에서 실제 `1.34.x` 키를 골라야 합니다. `jq` 는 minor 자체가 없을 때 빈 문자열을 돌려주고, `1.34.9` 와 `1.34.10` 도 숫자 기준으로 정렬해 가장 최신 patch를 고릅니다. `K8S_VERSION` 이 비어 있으면 임의로 `1.33` 이나 `1.35` 를 넣지 말고, Korea Central 에서 실제 `1.34.x` patch가 반환될 때까지 멈추는 것이 맞습니다.
+여기서는 `values[].version` 이 minor (`1.34`) 까지만 주어진다는 점 때문에 `patchVersions` 객체에서 실제 `1.34.x` 키를 골라야 합니다. `jq` 는 minor 자체가 없을 때 빈 문자열을 돌려주고, `1.34.9` 와 `1.34.10` 도 숫자 기준으로 정렬해 가장 최신 patch를 고릅니다. `K8S_VERSION` 이 비어 있으면 임의로 `1.33` 이나 `1.35` 를 넣지 말고, Korea Central 에서 실제 `1.34.x` patch가 반환될 때까지 멈추는 것이 맞습니다. 한 개 regular node 위에 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline을 같이 올리려면 `Standard_D16s_v5` 한 대를 유지한 1-node architecture 가 현재 승인된 최소선입니다.
 
 이 첫 저장 직후부터 `results/workshop.env` 는 authoritative state file 입니다. 새 Cloud Shell 에서 다시 시작해야 하면 저장소 루트에서 `source "$WORKSHOP_STATE"` 로 같은 값을 복구한 뒤 다음 단계로 넘어갑니다.
 
@@ -258,7 +258,7 @@ source "$WORKSHOP_STATE"
 | `No supported Kubernetes 1.34.x version` | Korea Central 의 `1.34` patch map | `az aks get-versions --location koreacentral --query "values[?version=='1.34'].patchVersions | [0]" --output json \| jq -r 'if type=="object" then (keys_unsorted \| map(select(startswith("1.34."))) \| sort_by(split(".")\|map(tonumber)) \| last // "") else "" end'` | 다른 버전을 강제로 넣지 말고, 결과가 비어 있으면 해당 minor 가 아직 없다는 뜻으로 보고 교육용 구독/지역 상태를 확인하거나 `1.34.x` 가 다시 노출될 때까지 대기 |
 | `cg` subnet delegation 누락 | delegation 이름 | `az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$CG_SUBNET" --query delegations[].serviceName -o tsv` | `--delegations Microsoft.ContainerInstance/containerGroups` 를 다시 적용 |
 | VN2 outbound 오류가 걱정됨 | NAT 연결 여부 | `az network vnet subnet show -g "$RG" --vnet-name "$VNET" -n "$CG_SUBNET" --query natGateway.id -o tsv` | `az network vnet subnet update ... --nat-gateway "$NAT_NAME"` 재실행 |
-| `az aks create` 가 quota/SKU 로 실패함 | Module 01 결과 | `cat results/environment.json` | preflight를 다시 실행하고 `Standard_D8s_v5` headroom 을 먼저 해결 |
+| `az aks create` 가 quota/SKU 로 실패함 | Module 01 결과 | `cat results/environment.json` | preflight를 다시 실행하고 `Standard_D16s_v5` headroom 을 먼저 해결 |
 | kubelet role assignment 가 실패함 | kubelet identity 값 | `az aks show -g "$RG" -n "$AKS" --query '{kubelet:identityProfile.kubeletidentity.objectId,nodeRg:nodeResourceGroup}' -o json` | 값이 비어 있지 않은지 확인 후 두 scope 모두에 Contributor 재부여 |
 
 ## 이전/다음

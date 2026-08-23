@@ -145,6 +145,8 @@ required_07 = [
     "Never pass a wildcard or broad match into cleanup.",
     "Save the recovered exact RG back into results/workshop.env before deleting anything.",
     "printf 'export RG=%q\\n' \"$RG\"",
+    "두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline",
+    "Standard_D16s_v5",
 ]
 
 for item in required_07:

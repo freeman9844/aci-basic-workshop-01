@@ -222,12 +222,35 @@ if summary_order != expected_scenario_order:
 preflight_text = (root / "scripts/preflight.sh").read_text(encoding="utf-8")
 chart_match = re.search(r'^VN2_CHART_VERSION="([^"]+)"$', preflight_text, re.MULTILINE)
 image_match = re.search(r'^BENCHMARK_IMAGE="([^"]+)"$', preflight_text, re.MULTILINE)
+vm_headroom_match = re.search(r'^REQUIRED_VM_VCPU_HEADROOM="([^"]+)"$', preflight_text, re.MULTILINE)
 if not chart_match or chart_match.group(1) != expected_chart:
     raise SystemExit("scripts/preflight.sh must pin VN2_CHART_VERSION to 1.3410.26081102")
 if not image_match or image_match.group(1) != expected_image:
     raise SystemExit("scripts/preflight.sh must pin the benchmark image digest")
+if not vm_headroom_match or vm_headroom_match.group(1) != "16":
+    raise SystemExit("scripts/preflight.sh must require 16 regional vCPU headroom")
 if expected_chart not in (root / "docs/03-install-dual-vn2.md").read_text(encoding="utf-8"):
     raise SystemExit("docs/03-install-dual-vn2.md must document the pinned VN2 chart version")
+
+stale_hits = []
+stale_needles = ("Standard_D" + "8s_v5", "need at least " + "8")
+for path in root.rglob("*"):
+    if not path.is_file():
+        continue
+    relative = path.relative_to(root).as_posix()
+    if relative.startswith("docs/superpowers/") or relative.startswith("results/") or "__pycache__" in relative:
+        continue
+    if path.suffix in {".pyc", ".png", ".jpg", ".jpeg", ".gif", ".pdf"}:
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        continue
+    for needle in stale_needles:
+        if needle in text:
+            stale_hits.append(f"{relative}: {needle}")
+if stale_hits:
+    raise SystemExit("Stale D8/8-core workshop contract remains outside historical snapshots:\n" + "\n".join(stale_hits))
 
 for manifest_path in sorted((root / "manifests").glob("*.yaml")):
     images = re.findall(r'^\s*image:\s*(\S+)\s*$', manifest_path.read_text(encoding="utf-8"), re.MULTILINE)

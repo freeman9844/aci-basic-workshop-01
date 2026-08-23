@@ -7,6 +7,7 @@ RESULTS_DIR="$ROOT/results"
 ENVIRONMENT_JSON="$RESULTS_DIR/environment.json"
 ORIGINAL_ENVIRONMENT_JSON="$TMP/original-environment.json"
 HAD_ORIGINAL_ENVIRONMENT_JSON="0"
+ORIGINAL_ENVIRONMENT_JSON_CONTENT=""
 
 cleanup() {
   if [[ "$HAD_ORIGINAL_ENVIRONMENT_JSON" == "1" ]]; then
@@ -21,13 +22,15 @@ cleanup() {
 
 trap cleanup EXIT
 
+rm -rf "$TMP"
+
 if [[ -f "$ENVIRONMENT_JSON" ]]; then
   HAD_ORIGINAL_ENVIRONMENT_JSON="1"
+  ORIGINAL_ENVIRONMENT_JSON_CONTENT="$(cat "$ENVIRONMENT_JSON")"
   mkdir -p "$TMP"
   cp "$ENVIRONMENT_JSON" "$ORIGINAL_ENVIRONMENT_JSON"
 fi
 
-rm -rf "$TMP"
 mkdir -p "$TMP/bin" "$TMP/logs"
 mkdir -p "$RESULTS_DIR"
 
@@ -153,8 +156,8 @@ set_valid_defaults() {
   write_file "$TMP/provider-standby.json" '{"namespace":"Microsoft.StandbyPool","registrationState":"Registered"}'
   write_file "$TMP/feature.json" '{"name":"StandbyContainerGroupPoolPreview","properties":{"state":"Registered"}}'
   write_file "$TMP/role-assignments.json" '[{"roleDefinitionName":"Owner","scope":"/providers/Microsoft.Management/managementGroups/example"}]'
-  write_file "$TMP/vm-skus.json" '[{"name":"Standard_D8s_v5","locations":["koreacentral"],"restrictions":[]}]'
-  write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"10","limit":"32"}]'
+  write_file "$TMP/vm-skus.json" '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[]}]'
+  write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"16","limit":"32"}]'
   write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20},{"name":{"value":"StandardSpotCores","localizedValue":"Standard spot SKU cores"},"currentValue":0,"limit":20},{"name":{"value":"StandardK80Cores","localizedValue":"Standard K80 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardP100Cores","localizedValue":"Standard P100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardV100Cores","localizedValue":"Standard V100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"DedicatedContainerGroups","localizedValue":"Dedicated container groups"},"currentValue":0,"limit":20},{"name":{"value":"DedicatedCores","localizedValue":"Dedicated cores"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialContainerGroups","localizedValue":"Confidential container groups"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialCores","localizedValue":"Confidential cores"},"currentValue":0,"limit":20}]}'
   write_file "$TMP/kubectl-version.json" '{"clientVersion":{"gitVersion":"v1.30.2"}}'
   HELM_VERSION='v3.16.1'
@@ -209,7 +212,7 @@ run_preflight() {
     HELM_VERSION="${HELM_VERSION-v3.16.1}" \
     "$ROOT/scripts/preflight.sh" \
     --location koreacentral \
-    --vm-size Standard_D8s_v5 "$@"
+    --vm-size Standard_D16s_v5 "$@"
 }
 
 set_valid_defaults
@@ -220,7 +223,11 @@ version_status=$?
 set -e
 [[ "$version_status" -ne 0 ]]
 grep -F 'Azure CLI 2.75.0 or newer is required' <<<"$version_output" >/dev/null
-test ! -e "$ENVIRONMENT_JSON"
+if [[ "$HAD_ORIGINAL_ENVIRONMENT_JSON" == "1" ]]; then
+  [[ "$(cat "$ENVIRONMENT_JSON")" == "$ORIGINAL_ENVIRONMENT_JSON_CONTENT" ]]
+else
+  test ! -e "$ENVIRONMENT_JSON"
+fi
 
 set_valid_defaults
 success_output="$(run_preflight 2>&1)"
@@ -236,7 +243,7 @@ assert payload["schema_version"] == 1
 assert payload["subscription_id"] == "00000000-0000-0000-0000-000000000001"
 assert payload["tenant_id"] == "11111111-1111-1111-1111-111111111111"
 assert payload["location"] == "koreacentral"
-assert payload["vm_size"] == "Standard_D8s_v5"
+assert payload["vm_size"] == "Standard_D16s_v5"
 assert payload["azure_cli_version"] == "2.75.0"
 assert payload["kubectl_version"] == "1.30.2"
 assert payload["helm_version"] == "3.16.1"
@@ -246,7 +253,7 @@ PY
 baseline_environment_json="$(cat "$ENVIRONMENT_JSON")"
 
 set_valid_defaults
-write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":10,"limit":32}]'
+write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":16,"limit":32}]'
 numeric_vm_usage_output="$(run_preflight 2>&1)"
 grep -F 'Preflight checks passed.' <<<"$numeric_vm_usage_output" >/dev/null
 test -f "$ENVIRONMENT_JSON"
@@ -264,13 +271,13 @@ grep -F 'Preflight checks passed.' <<<"$legacy_success_output" >/dev/null
 test -f "$ENVIRONMENT_JSON"
 
 set_valid_defaults
-write_file "$TMP/vm-skus.json" '[{"name":"Standard_D8s_v5","locations":["koreacentral"],"restrictions":[{"type":"Location","reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"]}}]}]'
+write_file "$TMP/vm-skus.json" '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[{"type":"Location","reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"]}}]}]'
 set +e
 restricted_sku_output="$(run_preflight 2>&1)"
 restricted_sku_status=$?
 set -e
 [[ "$restricted_sku_status" -ne 0 ]]
-grep -F 'ERROR: VM size Standard_D8s_v5 is restricted in koreacentral.' <<<"$restricted_sku_output" >/dev/null
+grep -F 'ERROR: VM size Standard_D16s_v5 is restricted in koreacentral.' <<<"$restricted_sku_output" >/dev/null
 grep -F '"reasonCode": "NotAvailableForSubscription"' <<<"$restricted_sku_output" >/dev/null
 grep -F '"locations": [' <<<"$restricted_sku_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
@@ -294,6 +301,16 @@ set_valid_defaults
 boundary_success_output="$(run_preflight 2>&1)"
 grep -F 'Preflight checks passed.' <<<"$boundary_success_output" >/dev/null
 test -f "$ENVIRONMENT_JSON"
+
+set_valid_defaults
+write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":17,"limit":32}]'
+set +e
+vm_headroom_output="$(run_preflight 2>&1)"
+vm_headroom_status=$?
+set -e
+[[ "$vm_headroom_status" -ne 0 ]]
+grep -F 'regional vCPU headroom is 15; need at least 16' <<<"$vm_headroom_output" >/dev/null
+[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
 write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":11,"limit":20}]}'

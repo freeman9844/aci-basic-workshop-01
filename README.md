@@ -6,7 +6,7 @@
 > 이 워크숍은 **전용 교육용 Azure 구독의 Owner 권한**을 전제로 합니다. 기존 production 구독이나 공유 AKS 클러스터에서 진행하지 마세요.
 
 > [!WARNING]
-> **비용**이 즉시 발생합니다. 실습 중에는 AKS VM, `cg` subnet에 연결한 **NAT Gateway** 와 **public IP**, **ACI OnDemand** container group 생성, 그리고 StandbyPool의 **5개의 warm standby** container groups가 함께 유지됩니다. Module 07의 정리 절차를 생략하면 실습 종료 후에도 과금이 계속됩니다.
+> **비용**이 즉시 발생합니다. 실습 중에는 AKS VM, `cg` subnet에 연결한 **NAT Gateway** 와 **public IP**, **ACI OnDemand** container group 생성, 그리고 StandbyPool의 **5개의 warm standby** container groups가 함께 유지됩니다. regular AKS VM은 `Standard_D16s_v5` 한 대를 유지한 1-node architecture 로 고정하며, 이는 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline 이 이전의 더 작은 regular node 크기에서는 CPU 부족으로 막혔기 때문입니다. Module 07의 정리 절차를 생략하면 실습 종료 후에도 과금이 계속됩니다.
 
 ## 빠른 시작
 
@@ -74,6 +74,8 @@ flowchart TB
 - `results/` 디렉터리에 raw evidence를 보관할 수 있는 저장소 쓰기 권한
 
 Module 01에서 provider 등록, quota, VM SKU, Helm/Kubernetes 도구 버전을 다시 확인합니다.
+
+참가자 기본 노드 크기는 `Standard_D16s_v5` 입니다. live evidence 상 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline 을 같은 regular node에 함께 두면 이전의 더 작은 node 크기는 `Insufficient cpu` 로 막혔기 때문에, 이 워크숍은 한 대의 regular node만 유지하는 1-node architecture 를 그대로 두고 VM 크기만 올립니다.
 
 ## 모듈 구성
 

@@ -132,7 +132,7 @@ cd ~/aci-vn2-performance-workshop
 
 ( set -euo pipefail
   az account show --output table
-  ./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5
+  ./scripts/preflight.sh --location koreacentral --vm-size Standard_D16s_v5
   cat results/environment.json
 )
 ```
@@ -157,6 +157,12 @@ ERROR: Microsoft.StandbyPool must be Registered; found NotRegistered
 ERROR: StandbyContainerGroupPoolPreview is not registered. Run: az feature register --namespace Microsoft.StandbyPool --name StandbyContainerGroupPoolPreview
 ```
 
+regional VM quota가 모자라면 다음처럼 멈춰야 정상입니다.
+
+```text
+ERROR: regional vCPU headroom is 15; need at least 16
+```
+
 Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모듈로 진행하지 말고** 여기서 중단합니다. 이 워크숍은 fail-fast를 원칙으로 하므로 불완전한 선행 조건을 묵인하지 않습니다.
 
 ## 완료 체크포인트
@@ -166,7 +172,7 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 - `StandbyContainerGroupPoolPreview` 가 Registered 이거나, `ResourceNotFound` 로 GA 전환이 확인되었다.
 - `Standby Pool Resource Provider` 서비스 주체에 세 가지 구독 역할이 부여되었다.
 - Cloud Shell 또는 로컬 Bash 환경에서 필수 도구가 모두 실행된다.
-- `./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5` 가 성공했다.
+- `./scripts/preflight.sh --location koreacentral --vm-size Standard_D16s_v5` 가 성공했다.
 - `results/environment.json` 파일이 생성되었다.
 - fail-fast 블록이 끝난 뒤에도 interactive parent Cloud Shell 에는 persistent `set -e` / `set -u` 가 남지 않는다.
 - quota 부족, Owner 누락, provider 미등록 시 어떤 항목을 먼저 고쳐야 하는지 메모했다.
@@ -179,7 +185,7 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 | `ResourceNotFound` 가 feature show 에서 반환됨 | GA 전환 여부 | `grep -i ResourceNotFound results/standby-feature-show.stderr.log` | 오류가 아니라면 provider Registered 만 확인하고 계속 진행 |
 | `Standby Pool Resource Provider service principal was not found.` | Entra 조회 결과 | `az ad sp list --display-name 'Standby Pool Resource Provider' --output table` | display name 오타 여부 확인, 필요 시 관리자와 구독 상태 확인 |
 | `Role 'Azure Container Instances Contributor' doesn't exist` 또는 role assignment create 가 실패함 | exact role definition name, 현재 사용자 권한 | `az role definition list --name 'Azure Container Instances Contributor Role' --output table` | `Azure Container Instances Contributor Role` 로 다시 실행하고, 그래도 실패하면 전용 교육용 구독 Owner 로 다시 로그인 |
-| preflight가 quota 또는 SKU 부족으로 실패함 | Korea Central 가용량 | `./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5` | quota 증설 또는 구독 교체 후 다시 시작 |
+| preflight가 quota 또는 SKU 부족으로 실패함 | Korea Central 가용량 | `./scripts/preflight.sh --location koreacentral --vm-size Standard_D16s_v5` | regional vCPU headroom 16과 SKU 가용성을 먼저 해결한 뒤 다시 시작 |
 
 ACI quota 증적이 필요하면 preflight와 같은 REST 경로를 직접 조회합니다. `az container list-usage` 는 현재 Azure CLI에 없으므로 사용하지 않습니다.
 현재 API 응답은 `ContainerGroups` 를 노출할 수 있고, 과거 응답은 `StandardContainerGroups` 를 노출할 수 있습니다. In other words, the current API may expose `ContainerGroups`, and historical responses may expose `StandardContainerGroups`. No guessing beyond these two container group quota names is allowed.

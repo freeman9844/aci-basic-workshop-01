@@ -19,6 +19,9 @@ set -euo pipefail
 
 case "$*" in
   "get nodepool workshop-nap -o json")
+    if [[ "${KUBECTL_MODE:-healthy}" == "slow-nodepool" ]]; then
+      sleep 3
+    fi
     if [[ "${KUBECTL_MODE:-healthy}" == "missing" ]]; then
       printf 'Error from server (NotFound): nodepools.karpenter.sh "workshop-nap" not found\n' >&2
       exit 1
@@ -34,6 +37,9 @@ JSON
     fi
     ;;
   "get nodes -l karpenter.sh/nodepool=workshop-nap -o json")
+    if [[ "${KUBECTL_MODE:-healthy}" == "slow-nodes" ]]; then
+      sleep 3
+    fi
     if [[ "${KUBECTL_MODE:-healthy}" == "timeout" ]]; then
       printf '{"items":[{}]}\n'
     else
@@ -41,6 +47,9 @@ JSON
     fi
     ;;
   "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o json")
+    if [[ "${KUBECTL_MODE:-healthy}" == "slow-nodeclaims" ]]; then
+      sleep 3
+    fi
     if [[ "${KUBECTL_MODE:-healthy}" == "timeout" ]]; then
       printf '{"items":[{}]}\n'
     else
@@ -65,6 +74,52 @@ jq -e '
   and .nodeclaims == 0
   and .ready == true
 ' <<<"$output"
+
+output="$(PATH="$TEST_DIR:$PATH" "$SCRIPT" --name workshop-nap \
+  --expect-nodes 00 --expect-nodeclaims 00 \
+  --timeout-seconds 08 --interval-seconds 01)"
+jq -e '.health == "ready" and .nodes == 0 and .nodeclaims == 0 and .ready == true' <<<"$output"
+
+assert_probe_timeout() {
+  local mode="$1"
+  local start_ns end_ns elapsed_ms output status
+
+  start_ns="$(python3 - <<'PY'
+import time
+print(time.monotonic_ns())
+PY
+)"
+  set +e
+  output="$(KUBECTL_MODE="$mode" PATH="$TEST_DIR:$PATH" "$SCRIPT" \
+    --name workshop-nap \
+    --expect-nodes 0 --expect-nodeclaims 0 \
+    --timeout-seconds 1 --interval-seconds 0)"
+  status=$?
+  set -e
+  end_ns="$(python3 - <<'PY'
+import time
+print(time.monotonic_ns())
+PY
+)"
+  elapsed_ms="$(python3 - "$start_ns" "$end_ns" <<'PY'
+import sys
+print((int(sys.argv[2]) - int(sys.argv[1])) / 1_000_000)
+PY
+)"
+
+  [[ "$status" -eq 3 ]]
+  python3 - "$elapsed_ms" <<'PY'
+import sys
+elapsed_ms = float(sys.argv[1])
+if elapsed_ms > 2500:
+    raise SystemExit(f"probe exceeded timeout contract: {elapsed_ms:.3f}ms")
+PY
+  jq -e '.node_pool == "workshop-nap" and .ready == false' <<<"$output"
+}
+
+assert_probe_timeout slow-nodepool
+assert_probe_timeout slow-nodes
+assert_probe_timeout slow-nodeclaims
 
 set +e
 output="$(KUBECTL_MODE=degraded PATH="$TEST_DIR:$PATH" "$SCRIPT" \
@@ -97,6 +152,16 @@ status=$?
 set -e
 [[ "$status" -eq 64 ]]
 grep -F -- '--name requires a value' <<<"$error"
+
+set +e
+error="$("$SCRIPT" --name workshop-nap \
+  --expect-nodes 999999999999999999999999999999 \
+  --expect-nodeclaims 0 \
+  --timeout-seconds 5 --interval-seconds 1 2>&1)"
+status=$?
+set -e
+[[ "$status" -eq 64 ]]
+grep -F 'expect_nodes must be in range' <<<"$error"
 
 set +e
 output="$(KUBECTL_MODE=missing PATH="$TEST_DIR:$PATH" "$SCRIPT" \

@@ -70,11 +70,31 @@ for required in node_pool expect_nodes expect_nodeclaims timeout_seconds interva
   fi
 done
 
-for numeric in expect_nodes expect_nodeclaims timeout_seconds interval_seconds; do
-  if [[ ! "${!numeric}" =~ ^[0-9]+$ ]]; then
-    printf 'ERROR: %s must be a non-negative integer\n' "$numeric" >&2
+normalize_non_negative_integer() {
+  local variable="$1"
+  local value="${!variable}"
+  local max_value="2147483647"
+
+  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    printf 'ERROR: %s must be a non-negative integer\n' "$variable" >&2
     exit 64
   fi
+
+  while [[ ${#value} -gt 1 && "${value:0:1}" == "0" ]]; do
+    value="${value:1}"
+  done
+
+  if [[ ${#value} -gt ${#max_value} ]] \
+    || [[ ${#value} -eq ${#max_value} && "$value" > "$max_value" ]]; then
+    printf 'ERROR: %s must be in range 0..%s\n' "$variable" "$max_value" >&2
+    exit 64
+  fi
+
+  printf -v "$variable" '%s' "$value"
+}
+
+for numeric in expect_nodes expect_nodeclaims timeout_seconds interval_seconds; do
+  normalize_non_negative_integer "$numeric"
 done
 
 emit_status() {
@@ -103,31 +123,67 @@ latest_health="missing"
 latest_nodes=0
 latest_nodeclaims=0
 latest_ready=false
+probe_output=""
+
+emit_timeout() {
+  emit_status "$latest_health" "$latest_nodes" "$latest_nodeclaims" false
+  exit 3
+}
+
+run_probe() {
+  local failure_health="$1"
+  local failure_message="$2"
+  local now remaining status output
+  shift 2
+
+  now="$(date +%s)"
+  if ((now >= deadline)); then
+    emit_timeout
+  fi
+  remaining=$((deadline - now))
+
+  if output="$(timeout --signal=KILL "${remaining}s" kubectl "$@")"; then
+    status=0
+  else
+    status=$?
+  fi
+
+  now="$(date +%s)"
+  if ((status == 124 || status == 137 || now >= deadline)); then
+    emit_timeout
+  fi
+  if ((status != 0)); then
+    printf 'ERROR: %s\n' "$failure_message" >&2
+    emit_status "$failure_health" 0 0 false
+    exit 2
+  fi
+
+  probe_output="$output"
+}
 
 while true; do
-  if ! node_pool_json="$(kubectl get nodepool "$node_pool" -o json)"; then
-    printf 'ERROR: Failed to get NodePool %s\n' "$node_pool" >&2
-    emit_status "missing" 0 0 false
-    exit 2
-  fi
+  run_probe "missing" "Failed to get NodePool $node_pool" \
+    get nodepool "$node_pool" -o json
+  node_pool_json="$probe_output"
 
-  if ! nodes_json="$(kubectl get nodes -l "karpenter.sh/nodepool=$node_pool" -o json)"; then
-    printf 'ERROR: Failed to get Nodes for NodePool %s\n' "$node_pool" >&2
-    emit_status "error" 0 0 false
-    exit 2
-  fi
+  run_probe "error" "Failed to get Nodes for NodePool $node_pool" \
+    get nodes -l "karpenter.sh/nodepool=$node_pool" -o json
+  nodes_json="$probe_output"
 
-  if ! nodeclaims_json="$(kubectl get nodeclaims -l "karpenter.sh/nodepool=$node_pool" -o json)"; then
-    printf 'ERROR: Failed to get NodeClaims for NodePool %s\n' "$node_pool" >&2
-    emit_status "error" 0 0 false
-    exit 2
-  fi
+  run_probe "error" "Failed to get NodeClaims for NodePool $node_pool" \
+    get nodeclaims -l "karpenter.sh/nodepool=$node_pool" -o json
+  nodeclaims_json="$probe_output"
 
   ready_condition="$(jq -r '
     [.status.conditions[]? | select(.type == "Ready") | .status] | last // ""
   ' <<<"$node_pool_json")"
   latest_nodes="$(jq -r '.items | length' <<<"$nodes_json")"
   latest_nodeclaims="$(jq -r '.items | length' <<<"$nodeclaims_json")"
+
+  now="$(date +%s)"
+  if ((now >= deadline)); then
+    emit_timeout
+  fi
 
   if [[ "$ready_condition" != "True" ]]; then
     emit_status "degraded" "$latest_nodes" "$latest_nodeclaims" false

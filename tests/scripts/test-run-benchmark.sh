@@ -52,14 +52,12 @@ cat >"$TMP/bin/python3" <<'FAKE_PYTHON'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TEST_LOG_DIR/collector.log"
-if [[ "${SLOW_COLLECTOR:-0}" == "1" ]]; then
-  sleep "${SLOW_COLLECTOR_SECONDS:-4}"
-fi
 
 output=""
 run=""
 namespace=""
 scenario=""
+timeout_seconds=""
 
 shift
 while (($#)); do
@@ -80,11 +78,23 @@ while (($#)); do
       scenario="$2"
       shift 2
       ;;
+    --timeout-seconds)
+      timeout_seconds="$2"
+      shift 2
+      ;;
     *)
       shift
       ;;
   esac
 done
+
+if [[ "${SLOW_COLLECTOR:-0}" == "1" ]]; then
+  if [[ "${COLLECTOR_HONOR_TIMEOUT:-0}" == "1" ]]; then
+    sleep "$timeout_seconds"
+  else
+    sleep "${SLOW_COLLECTOR_SECONDS:-4}"
+  fi
+fi
 
 mkdir -p "$(dirname "$output")"
 cat >"$output" <<JSON
@@ -181,7 +191,10 @@ reset_behavior() {
   unset FAIL_CREATE_NAMESPACE FAIL_KUBECTL_DESCRIBE_PODS FAIL_KUBECTL_GET_EVENTS
   unset FAIL_KUBECTL_GET_NODES FAIL_AZ_CONTAINER_LIST
   unset SLOW_STANDBY_CALL SLOW_STANDBY_SECONDS SLOW_NAP_CALL SLOW_NAP_SECONDS
-  unset SLOW_COLLECTOR SLOW_COLLECTOR_SECONDS SLOW_KUBECTL_PREFIX SLOW_KUBECTL_SECONDS
+  unset SLOW_COLLECTOR SLOW_COLLECTOR_SECONDS COLLECTOR_HONOR_TIMEOUT
+  unset SLOW_KUBECTL_PREFIX SLOW_KUBECTL_SECONDS
+  unset TIMEOUT_SECONDS POST_COLLECTOR_RESERVE_SECONDS
+  unset NAMESPACE_WAIT_TIMEOUT_SECONDS
 }
 
 run_with_fakes() {
@@ -206,8 +219,12 @@ run_with_fakes() {
     SLOW_NAP_SECONDS="${SLOW_NAP_SECONDS-}" \
     SLOW_COLLECTOR="${SLOW_COLLECTOR-}" \
     SLOW_COLLECTOR_SECONDS="${SLOW_COLLECTOR_SECONDS-}" \
+    COLLECTOR_HONOR_TIMEOUT="${COLLECTOR_HONOR_TIMEOUT-}" \
     SLOW_KUBECTL_PREFIX="${SLOW_KUBECTL_PREFIX-}" \
     SLOW_KUBECTL_SECONDS="${SLOW_KUBECTL_SECONDS-}" \
+    TIMEOUT_SECONDS="${TIMEOUT_SECONDS-}" \
+    POST_COLLECTOR_RESERVE_SECONDS="${POST_COLLECTOR_RESERVE_SECONDS-}" \
+    NAMESPACE_WAIT_TIMEOUT_SECONDS="${NAMESPACE_WAIT_TIMEOUT_SECONDS-}" \
     "$ROOT/scripts/run-benchmark.sh" "$@"
 }
 
@@ -368,26 +385,49 @@ test ! -s "$TMP/logs/standby.log"
 
 reset_behavior
 reset_logs
-SLOW_NAP_CALL=1
-SLOW_NAP_SECONDS=1
+COLLECTOR_EXIT_RUN=1
+COLLECTOR_EXIT_CODE=2
 SLOW_COLLECTOR=1
-SLOW_COLLECTOR_SECONDS=4
+COLLECTOR_HONOR_TIMEOUT=1
+POST_COLLECTOR_RESERVE_SECONDS=1
 started_at="$(monotonic_milliseconds)"
 set +e
 run_with_fakes \
   --scenario aks-nap \
   --runs 1 \
-  --scenario-timeout-seconds 2 \
+  --scenario-timeout-seconds 3 \
   --output-dir "$TMP/deadline-collector" >/dev/null 2>&1
 status=$?
 set -e
-assert_deadline_status "$status" "$started_at" "NAP precheck and collector lifecycle"
+if [[ "$status" -ne 2 ]]; then
+  printf 'expected reserved collector timeout to exit 2, got %s\n' "$status" >&2
+  exit 1
+fi
 test -e "$TMP/deadline-collector/diagnostics/aks-nap-run-1/nap-precheck.json"
-grep -F -- '--timeout-seconds 1' "$TMP/logs/collector.log" >/dev/null
+grep -F -- '--timeout-seconds 3' "$TMP/logs/collector.log" >/dev/null
+test -s "$TMP/deadline-collector/raw/aks-nap-run-1.json"
+grep -F '"completion_reason":"timeout"' \
+  "$TMP/deadline-collector/raw/aks-nap-run-1.json" >/dev/null
 test -e "$TMP/deadline-collector/diagnostics/aks-nap-run-1/kubectl-describe-pods.txt"
-grep -F 'exit_status: 124' \
-  "$TMP/deadline-collector/diagnostics/aks-nap-run-1/kubectl-describe-pods.txt" >/dev/null
+grep -F 'delete namespace' "$TMP/logs/kubectl.log" >/dev/null
 test ! -e "$TMP/deadline-collector/.run-benchmark"
+
+reset_behavior
+reset_logs
+TIMEOUT_SECONDS=1
+POST_COLLECTOR_RESERVE_SECONDS=1
+SLOW_COLLECTOR=1
+SLOW_COLLECTOR_SECONDS=4
+started_at="$(monotonic_milliseconds)"
+set +e
+run_with_fakes \
+  --scenario vn2-ondemand \
+  --runs 1 \
+  --output-dir "$TMP/default-deadline" >/dev/null 2>&1
+status=$?
+set -e
+assert_deadline_status "$status" "$started_at" "default scenario lifecycle"
+grep -F 'delete namespace' "$TMP/logs/kubectl.log" >/dev/null
 
 reset_behavior
 reset_logs
@@ -429,6 +469,7 @@ reset_behavior
 reset_logs
 SLOW_KUBECTL_PREFIX="describe pods"
 SLOW_KUBECTL_SECONDS=4
+POST_COLLECTOR_RESERVE_SECONDS=1
 started_at="$(monotonic_milliseconds)"
 set +e
 run_with_fakes \
@@ -448,6 +489,7 @@ reset_behavior
 reset_logs
 SLOW_KUBECTL_PREFIX="delete namespace"
 SLOW_KUBECTL_SECONDS=4
+NAMESPACE_WAIT_TIMEOUT_SECONDS=1
 started_at="$(monotonic_milliseconds)"
 set +e
 run_with_fakes \

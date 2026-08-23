@@ -20,6 +20,7 @@ STANDBY_TIMEOUT_SECONDS="${STANDBY_TIMEOUT_SECONDS:-1200}"
 STANDBY_INTERVAL_SECONDS="${STANDBY_INTERVAL_SECONDS:-15}"
 NAMESPACE_WAIT_TIMEOUT_SECONDS="${NAMESPACE_WAIT_TIMEOUT_SECONDS:-120}"
 NAMESPACE_WAIT_INTERVAL_SECONDS="${NAMESPACE_WAIT_INTERVAL_SECONDS:-2}"
+POST_COLLECTOR_RESERVE_SECONDS="${POST_COLLECTOR_RESERVE_SECONDS:-30}"
 
 scenario=""
 runs=""
@@ -30,6 +31,8 @@ scenario_timeout_seconds=""
 render_only="false"
 work_dir=""
 scenario_deadline=""
+evidence_deadline=""
+cleanup_deadline=""
 
 RUN_CREATE_STATUS=0
 RUN_COLLECTOR_STATUS=0
@@ -135,6 +138,20 @@ if [[ "$scenario" == "aks-nap" ]]; then
   collector_timeout="$NAP_POD_TIMEOUT_SECONDS"
 fi
 
+if [[ -z "$scenario_timeout_seconds" ]]; then
+  case "$scenario" in
+    aks-nap)
+      scenario_timeout_seconds="$((((NAP_RESET_TIMEOUT_SECONDS * 2) + NAP_POD_TIMEOUT_SECONDS) * runs))"
+      ;;
+    vn2-standby|vn2-standby-cached)
+      scenario_timeout_seconds="$((((STANDBY_TIMEOUT_SECONDS * 2) + TIMEOUT_SECONDS) * runs))"
+      ;;
+    *)
+      scenario_timeout_seconds=$((TIMEOUT_SECONDS * runs))
+      ;;
+  esac
+fi
+
 if [[ ! -f "$TEMPLATE_PATH" ]]; then
   printf 'ERROR: missing manifest template: %s\n' "$TEMPLATE_PATH" >&2
   exit 1
@@ -187,6 +204,54 @@ run_with_scenario_deadline() {
 
   if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
     printf 'ERROR: scenario deadline exceeded during %s\n' "$operation" >&2
+    return 124
+  fi
+  return "$status"
+}
+
+run_with_evidence_deadline() {
+  local operation="$1"
+  shift
+
+  local remaining status
+  remaining=$((evidence_deadline - SECONDS))
+  if (( remaining <= 0 )); then
+    printf 'ERROR: scenario deadline exceeded before %s\n' "$operation" >&2
+    return 124
+  fi
+
+  if timeout --signal=KILL "${remaining}s" "$@"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+    printf 'ERROR: scenario deadline exceeded during %s\n' "$operation" >&2
+    return 124
+  fi
+  return "$status"
+}
+
+run_with_cleanup_deadline() {
+  local operation="$1"
+  shift
+
+  local remaining status
+  remaining=$((cleanup_deadline - SECONDS))
+  if (( remaining <= 0 )); then
+    printf 'ERROR: namespace cleanup deadline exceeded before %s\n' "$operation" >&2
+    return 124
+  fi
+
+  if timeout --signal=KILL "${remaining}s" "$@"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+    printf 'ERROR: namespace cleanup deadline exceeded during %s\n' "$operation" >&2
     return 124
   fi
   return "$status"
@@ -270,11 +335,10 @@ create_namespace() {
 
 wait_for_namespace_gone() {
   local namespace="$1"
-  local namespace_deadline status sleep_timeout
-  namespace_deadline=$((SECONDS + NAMESPACE_WAIT_TIMEOUT_SECONDS))
+  local status sleep_timeout
 
   while true; do
-    if run_with_scenario_deadline "namespace cleanup verification" \
+    if run_with_cleanup_deadline "namespace cleanup verification" \
       "$KUBECTL_BIN" get namespace "$namespace" >/dev/null 2>&1; then
       :
     else
@@ -285,25 +349,21 @@ wait_for_namespace_gone() {
       return 0
     fi
 
-    if (( SECONDS >= namespace_deadline )); then
+    if (( SECONDS >= cleanup_deadline )); then
       printf 'ERROR: namespace %s still exists after %ss\n' \
         "$namespace" "$NAMESPACE_WAIT_TIMEOUT_SECONDS" >&2
       return 1
     fi
 
-    sleep_timeout=$((namespace_deadline - SECONDS))
-    if [[ -n "$scenario_deadline" ]] \
-      && (( scenario_deadline - SECONDS < sleep_timeout )); then
-      sleep_timeout=$((scenario_deadline - SECONDS))
-    fi
+    sleep_timeout=$((cleanup_deadline - SECONDS))
     if (( sleep_timeout <= 0 )); then
-      printf 'ERROR: scenario deadline exceeded during namespace cleanup\n' >&2
+      printf 'ERROR: namespace cleanup deadline exceeded during verification\n' >&2
       return 124
     fi
     if ! timeout --signal=KILL "${sleep_timeout}s" \
       sleep "$NAMESPACE_WAIT_INTERVAL_SECONDS"; then
-      if [[ -n "$scenario_deadline" && SECONDS -ge scenario_deadline ]]; then
-        printf 'ERROR: scenario deadline exceeded during namespace cleanup\n' >&2
+      if (( SECONDS >= cleanup_deadline )); then
+        printf 'ERROR: namespace cleanup deadline exceeded during verification\n' >&2
         return 124
       fi
     fi
@@ -334,7 +394,7 @@ capture_command_record() {
   : >"$stderr_path"
 
   set +e
-  if run_with_scenario_deadline "diagnostic command" \
+  if run_with_evidence_deadline "diagnostic command" \
     "$@" >"$stdout_path" 2>"$stderr_path"; then
     status=0
   else
@@ -480,7 +540,7 @@ run_single_benchmark() {
     printf 'ERROR: scenario deadline exceeded before collector\n' >&2
     RUN_COLLECTOR_STATUS=124
   else
-    run_with_scenario_deadline "collector" \
+    run_with_evidence_deadline "collector" \
       "$PYTHON_BIN" "$COLLECTOR_SCRIPT" \
       --scenario "$scenario" \
       --run "$run_number" \
@@ -499,7 +559,8 @@ run_single_benchmark() {
     RUN_DIAGNOSTICS_STATUS=$?
   fi
 
-  if run_with_scenario_deadline "namespace deletion" \
+  cleanup_deadline=$((SECONDS + NAMESPACE_WAIT_TIMEOUT_SECONDS))
+  if run_with_cleanup_deadline "namespace deletion" \
     "$KUBECTL_BIN" delete namespace "$namespace" >/dev/null; then
     RUN_DELETE_STATUS=0
   else
@@ -507,6 +568,7 @@ run_single_benchmark() {
   fi
   wait_for_namespace_gone "$namespace"
   RUN_WAIT_STATUS=$?
+  cleanup_deadline=""
   rm -f "$manifest_path"
   set -e
 
@@ -538,9 +600,8 @@ if [[ "$render_only" == "true" ]]; then
   exit 0
 fi
 
-if [[ -n "$scenario_timeout_seconds" ]]; then
-  scenario_deadline=$((SECONDS + scenario_timeout_seconds))
-fi
+scenario_deadline=$((SECONDS + scenario_timeout_seconds))
+evidence_deadline=$((scenario_deadline + POST_COLLECTOR_RESERVE_SECONDS))
 
 work_dir="$output_dir/.run-benchmark"
 mkdir -p "$work_dir"

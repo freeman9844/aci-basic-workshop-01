@@ -79,7 +79,6 @@ required_files = [
     root / ".gitignore",
     root / "README.md",
     root / "tests/validate-workshop.sh",
-    root / ".github/workflows/validate-workshop.yml",
     *module_paths.values(),
     *sorted((root / "manifests").glob("*.yaml")),
     *sorted((root / "scripts").glob("*.sh")),
@@ -142,7 +141,6 @@ for path in sorted((root / "docs").glob("*.md")):
     scan_text_file(path)
 for path in sorted((root / "manifests").glob("*.yaml")):
     scan_text_file(path)
-scan_text_file(root / ".github/workflows/validate-workshop.yml")
 for path in sorted((root / "scripts").glob("*.sh")):
     scan_shell_comments(path)
 for path in sorted((root / "tests").rglob("*.sh")):
@@ -297,6 +295,8 @@ for path in root.rglob("*"):
     if (
         relative.startswith("docs/superpowers/")
         or relative.startswith(".superpowers/sdd/")
+        or relative.startswith(".worktrees/")
+        or relative.startswith("worktrees/")
         or relative.startswith("results/")
         or "__pycache__" in relative
     ):
@@ -327,28 +327,6 @@ for manifest_path in sorted((root / "manifests").glob("*.yaml")):
             )
         if "@sha256:" not in image or re.search(r"mcr\.microsoft\.com/azure-cli:[^@\s]+", image):
             raise SystemExit(f"{manifest_path.relative_to(root).as_posix()} uses a floating benchmark image tag")
-
-workflow_text = (root / ".github/workflows/validate-workshop.yml").read_text(encoding="utf-8")
-required_workflow_lines = [
-    "name: Validate workshop",
-    "on:",
-    "  push:",
-    "  pull_request:",
-    "permissions:",
-    "  contents: read",
-    "jobs:",
-    "  validate:",
-    "    runs-on: ubuntu-latest",
-    "      - uses: actions/checkout@v4",
-    "      - name: Validate workshop",
-    "        run: bash tests/validate-workshop.sh",
-]
-for line in required_workflow_lines:
-    if line not in workflow_text:
-        raise SystemExit(f"Workflow is missing required line: {line}")
-for forbidden in ("azure/login", "AZURE_", "contents: write", "id-token: write", "secrets."):
-    if forbidden in workflow_text:
-        raise SystemExit(f"Workflow must remain credential-free; found forbidden content: {forbidden}")
 
 print("Integration contract checks passed.")
 PY

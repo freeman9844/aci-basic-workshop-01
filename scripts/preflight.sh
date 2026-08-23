@@ -38,6 +38,13 @@ die() {
   exit 1
 }
 
+die_with_vm_usage_diagnostics() {
+  local payload="$1"
+  printf 'ERROR: Unexpected VM usage fields; refusing to guess.\n' >&2
+  print_json_or_raw "$payload"
+  exit 1
+}
+
 print_json_or_raw() {
   local payload="$1"
   if jq -e '.' >/dev/null 2>&1 <<<"$payload"; then
@@ -239,13 +246,57 @@ if [[ "$unrestricted_vm_sku_count" -eq 0 ]]; then
 fi
 
 vm_usage_json="$("$AZ_BIN" vm list-usage --location "$location" --output json)"
-regional_vcpu_available="$(jq_string "$vm_usage_json" '
+set +e
+regional_vcpu_matches_json="$(jq -c '
+  def normalize_nonnegative_int:
+    if type == "number" then
+      if . >= 0 and . == floor then .
+      else error("value must be a nonnegative integer")
+      end
+    elif type == "string" then
+      if test("^[0-9]+$") then tonumber
+      else error("value must be a base-10 nonnegative integer string")
+      end
+    else
+      error("value must be a number or string")
+    end;
+
   [
     .[]
-    | select((.name.value // "") == "cores" or (.name.localizedValue // "") == "Total Regional vCPUs")
-    | (.limit - .currentValue)
-  ][0]
-' 'regional vCPU usage')"
+    | select(
+        ((.name.value // "") == "cores")
+        or ((.name.localizedValue // "") == "Total Regional vCPUs")
+      )
+    | {
+        currentValue: (.currentValue | normalize_nonnegative_int),
+        limit: (.limit | normalize_nonnegative_int)
+      }
+  ]
+' <<<"$vm_usage_json" 2>/dev/null)"
+regional_vcpu_matches_status=$?
+set -e
+if [[ "$regional_vcpu_matches_status" -ne 0 || -z "$regional_vcpu_matches_json" || "$regional_vcpu_matches_json" == "null" ]]; then
+  die_with_vm_usage_diagnostics "$vm_usage_json"
+fi
+
+regional_vcpu_match_count="$(jq_string "$regional_vcpu_matches_json" 'length' 'regional vCPU usage matches')"
+if [[ "$regional_vcpu_match_count" -ne 1 ]]; then
+  die_with_vm_usage_diagnostics "$vm_usage_json"
+fi
+
+set +e
+regional_vcpu_available="$(jq -r '
+  .[0] as $usage
+  | if $usage.limit < $usage.currentValue
+    then error("limit must be greater than or equal to currentValue")
+    else ($usage.limit - $usage.currentValue)
+    end
+' <<<"$regional_vcpu_matches_json" 2>/dev/null)"
+regional_vcpu_available_status=$?
+set -e
+if [[ "$regional_vcpu_available_status" -ne 0 || -z "$regional_vcpu_available" || "$regional_vcpu_available" == "null" ]]; then
+  die_with_vm_usage_diagnostics "$vm_usage_json"
+fi
 if [[ "$regional_vcpu_available" -lt "$REQUIRED_VM_VCPU_HEADROOM" ]]; then
   die "regional vCPU headroom is $regional_vcpu_available; need at least $REQUIRED_VM_VCPU_HEADROOM"
 fi

@@ -154,7 +154,7 @@ set_valid_defaults() {
   write_file "$TMP/feature.json" '{"name":"StandbyContainerGroupPoolPreview","properties":{"state":"Registered"}}'
   write_file "$TMP/role-assignments.json" '[{"roleDefinitionName":"Owner","scope":"/providers/Microsoft.Management/managementGroups/example"}]'
   write_file "$TMP/vm-skus.json" '[{"name":"Standard_D8s_v5","locations":["koreacentral"],"restrictions":[]}]'
-  write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":10,"limit":32}]'
+  write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"10","limit":"32"}]'
   write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20},{"name":{"value":"StandardSpotCores","localizedValue":"Standard spot SKU cores"},"currentValue":0,"limit":20},{"name":{"value":"StandardK80Cores","localizedValue":"Standard K80 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardP100Cores","localizedValue":"Standard P100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardV100Cores","localizedValue":"Standard V100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"DedicatedContainerGroups","localizedValue":"Dedicated container groups"},"currentValue":0,"limit":20},{"name":{"value":"DedicatedCores","localizedValue":"Dedicated cores"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialContainerGroups","localizedValue":"Confidential container groups"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialCores","localizedValue":"Confidential cores"},"currentValue":0,"limit":20}]}'
   write_file "$TMP/kubectl-version.json" '{"clientVersion":{"gitVersion":"v1.30.2"}}'
   HELM_VERSION='v3.16.1'
@@ -162,6 +162,28 @@ set_valid_defaults() {
   AZ_ACI_USAGE_MODE='success'
   AZ_ACI_USAGE_ERROR='simulated az rest failure'
   AZ_ACI_USAGE_STATUS='1'
+}
+
+assert_vm_usage_failure() {
+  local payload="$1"
+  shift
+
+  set_valid_defaults
+  write_file "$TMP/vm-usage.json" "$payload"
+
+  local output=""
+  local status=0
+  set +e
+  output="$(run_preflight 2>&1)"
+  status=$?
+  set -e
+
+  [[ "$status" -ne 0 ]]
+  grep -F 'Unexpected VM usage fields; refusing to guess.' <<<"$output" >/dev/null
+  for needle in "$@"; do
+    grep -F "$needle" <<<"$output" >/dev/null
+  done
+  [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 }
 
 run_preflight() {
@@ -222,6 +244,18 @@ assert payload["vn2_chart_version"] == "1.3410.26081102"
 assert payload["benchmark_image"] == "mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
 PY
 baseline_environment_json="$(cat "$ENVIRONMENT_JSON")"
+
+set_valid_defaults
+write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":10,"limit":32}]'
+numeric_vm_usage_output="$(run_preflight 2>&1)"
+grep -F 'Preflight checks passed.' <<<"$numeric_vm_usage_output" >/dev/null
+test -f "$ENVIRONMENT_JSON"
+
+assert_vm_usage_failure '[{"name":{"value":"standardDSv3Family","localizedValue":"Standard DSv3 Family vCPUs"},"currentValue":"2","limit":"100"}]' '"standardDSv3Family"'
+assert_vm_usage_failure '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"2","limit":"100"},{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"3","limit":"100"}]' '"currentValue": "3"'
+assert_vm_usage_failure '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"two","limit":"100"}]' '"currentValue": "two"'
+assert_vm_usage_failure '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":-1,"limit":"100"}]' '"currentValue": -1'
+assert_vm_usage_failure '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"101","limit":"100"}]' '"currentValue": "101"' '"limit": "100"'
 
 set_valid_defaults
 write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20}]}'

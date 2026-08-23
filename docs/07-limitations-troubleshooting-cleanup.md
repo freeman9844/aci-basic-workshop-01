@@ -11,8 +11,8 @@
 ## 시작 전 상태
 
 - Module 06까지 끝나서 `results/summary.json`, `results/summary.csv`, `results/summary.md` 와 raw/diagnostics evidence 가 모두 남아 있다.
-- Cloud Shell 세션이 살아 있어 `kubectl`, `az`, `helm` 명령을 바로 다시 실행할 수 있다.
-- `RG` 와 `STANDBY_POOL` 환경 변수를 같은 이름으로 유지하고 있다.
+- 가능하면 `results/workshop.env` 가 남아 있고, fresh Cloud Shell 에서도 다시 source 할 수 있다.
+- `RG` 와 `STANDBY_POOL` 은 살아 있는 쉘 메모리보다 `results/workshop.env` 에 저장된 값이 기준이다.
 
 ## 진행 순서
 
@@ -35,6 +35,15 @@
 반드시 저장소 루트에서 아래 두 줄을 그대로 실행합니다.
 
 ```bash
+cd ~/aci-vn2-performance-workshop
+WORKSHOP_STATE="results/workshop.env"
+if [[ -f "$WORKSHOP_STATE" ]]; then
+  source "$WORKSHOP_STATE"
+fi
+if [[ -z "${RG:-}" ]]; then
+  printf 'RG is not set. Follow the fresh Cloud Shell recovery steps below before cleanup.\n' >&2
+  exit 1
+fi
 scripts/cleanup.sh --resource-group "$RG" --yes
 az group exists --name "$RG"
 ```
@@ -45,6 +54,13 @@ az group exists --name "$RG"
 false
 ```
 
+상태를 이미 복구했다면 실제 삭제 명령은 아래 두 줄입니다.
+
+```bash
+scripts/cleanup.sh --resource-group "$RG" --yes
+az group exists --name "$RG"
+```
+
 `cleanup.sh` 는 먼저 subscription ID 와 resource group 존재 여부를 확인하고, RG 가 이미 없으면 조기에 종료합니다. RG 가 존재하면 `az standby-container-group-pool list --resource-group "$RG" --query '[].name' --output tsv` 로 현재 RG 안의 standby pool 이름만 읽고, `benchmark` namespace, `vn2-image-cache` namespace, `vn2-standby` / `vn2-ondemand` Helm release, 그 RG 안의 standby pool, 마지막으로 RG 자체를 삭제합니다.
 
 fresh Cloud Shell session, authorized IP drift, 또는 missing kubeconfig 때문에 `kubectl`/`helm` 이 cluster unreachable warning 을 내더라도 billing-critical RG deletion 은 계속 진행되어야 합니다. 이 경우 `WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.` 또는 `Cleanup completed with warnings.` 같은 경고는 정상적인 evidence 이며, 숨기지 말고 CLI 출력 그대로 보존하십시오.
@@ -52,6 +68,35 @@ fresh Cloud Shell session, authorized IP drift, 또는 missing kubeconfig 때문
 `--yes` 를 빼면 script 는 subscription, resource group, Helm releases, standby pools 를 출력한 뒤 `type the resource group name exactly to continue` 를 요구합니다. 즉 cleanup scope 를 이름으로 다시 검증합니다.
 
 cleanup polling 이 실패하거나 RG 가 timeout 안에 사라지지 않으면 script 는 `az resource list --resource-group "$RG" --query '[].id' --output tsv` 를 호출해 residual resource IDs 를 출력합니다. 문서/티켓에는 이 exact residual resource IDs evidence 를 함께 남기십시오.
+
+### 3) fresh Cloud Shell recovery 와 missing state file 대응
+
+fresh Cloud Shell recovery 의 첫 선택지는 항상 기존 state file 입니다.
+
+```bash
+cd ~/aci-vn2-performance-workshop
+source results/workshop.env
+```
+
+만약 `results/workshop.env` 자체가 없다면, 아래 fallback 은 후보 RG를 찾는 용도만 사용합니다.
+
+```bash
+cd ~/aci-vn2-performance-workshop
+WORKSHOP_STATE="results/workshop.env"
+az group list --query "[?starts_with(name, 'rg-vn2-bench-')].[name, location]" --output table
+
+export RG="rg-vn2-bench-12345"
+STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
+umask 077
+printf 'export RG=%q\n' "$RG" >"$STATE_TMP"
+chmod 600 "$STATE_TMP"
+mv "$STATE_TMP" "$WORKSHOP_STATE"
+source "$WORKSHOP_STATE"
+```
+
+이 표는 broad match 를 보여 줄 뿐이며, 자동 삭제 대상이 아닙니다. Never pass a wildcard or broad match into cleanup. 참가자는 Portal, `az group show --name "$RG"`, 또는 기존 evidence 를 대조해 exact RG 하나를 직접 확정해야 합니다. Save the recovered exact RG back into results/workshop.env before deleting anything.
+
+`STANDBY_POOL` 이 꼭 필요하면 exact RG 를 확인한 다음 그 RG 안에서 다시 조회하십시오. 그러나 cleanup 자체는 broad match 를 받아서는 안 되며, `rg-vn2-bench-*` 같은 패턴을 `scripts/cleanup.sh` 에 직접 넘기면 안 됩니다.
 
 ## 문제 해결
 
@@ -75,6 +120,7 @@ cleanup polling 이 실패하거나 RG 가 timeout 안에 사라지지 않으면
 
 - API server authorized IP ranges, Windows, IPv6, DaemonSet, Kubernetes network policy 등 hard limitations 를 팀에 설명할 수 있다.
 - troubleshooting 표의 각 행에 대해 실제 evidence 파일 또는 CLI 명령을 다시 실행할 수 있다.
+- `results/workshop.env` 를 source 하는 정상 경로와 missing state file 때의 fresh Cloud Shell recovery 경로를 모두 설명할 수 있다.
 - `scripts/cleanup.sh --resource-group "$RG" --yes` 를 실행했다.
 - `az group exists --name "$RG"` 결과가 최종적으로 `false` 다.
 - cleanup scope 검증과 residual resource IDs 동작을 설명할 수 있다.

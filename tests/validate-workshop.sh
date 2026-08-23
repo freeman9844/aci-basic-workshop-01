@@ -23,6 +23,7 @@ run_step "Running prerequisites/foundation documentation tests" bash tests/docs/
 run_step "Running dual VN2 installation documentation tests" bash tests/docs/test-install-dual-vn2.sh
 run_step "Running benchmark module documentation tests" bash tests/docs/test-benchmark-modules.sh
 run_step "Running analysis/cleanup documentation tests" bash tests/docs/test-analysis-cleanup.sh
+run_step "Syntax-checking documented bash fences" bash tests/docs/test-shell-survivability.sh
 
 run_step "Running integration contract checks" python3 - "$ROOT" <<'PY'
 import ast

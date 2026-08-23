@@ -26,6 +26,9 @@ for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", 
         raise SystemExit(f"docs/05-standby-cache-benchmark.md is missing required section: {heading}")
 
 required_04 = [
+    "WORKSHOP_STATE=\"results/workshop.env\"",
+    "if [[ -f \"$WORKSHOP_STATE\" ]]; then",
+    "source \"$WORKSHOP_STATE\"",
     "require_workshop_vars() {",
     "run_and_capture_rc() {",
     "archive_failed_attempts() {",
@@ -67,9 +70,14 @@ required_04 = [
     "regular AKS",
     "VN2 OnDemand",
     "$STANDBY_POOL",
+    "Recover it from results/workshop.env or rerun the exact recovery steps from Module 02 before continuing.",
+    "Recover it from results/workshop.env or rerun the exact recovery steps from Module 03 before continuing.",
 ]
 
 required_05 = [
+    "WORKSHOP_STATE=\"results/workshop.env\"",
+    "if [[ -f \"$WORKSHOP_STATE\" ]]; then",
+    "source \"$WORKSHOP_STATE\"",
     "require_workshop_vars() {",
     "run_and_capture_rc() {",
     "archive_failed_attempts() {",
@@ -113,7 +121,7 @@ required_05 = [
     "If the collector failed after sample creation, raw JSON and diagnostics already exist for this scenario.",
     "RC=2 can also mean the internal standby pool pre-run or post-run check reported degraded health, so the current run may not have new raw JSON.",
     "RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.",
-    "Preserve this Cloud Shell session, run check_pool_state",
+    "If results/workshop.env was restored in a fresh Cloud Shell, run check_pool_state",
     "archive only any paths that actually exist for this scenario",
     "Run the archive/rerun example only for the standby scenario that failed. Do not archive or rerun a standby scenario that already succeeded.",
     "# Example: rerun only the failed standby scenario after evidence review and any pool recovery.",
@@ -124,6 +132,7 @@ required_05 = [
     "Use the per-run JSON and diagnostics to judge whether image caching actually helped.",
     "두 standby 시나리오 명령이 모두 0으로 끝났을 때만 정확히 6개의 standby raw 파일을 기대합니다.",
     "Module 04와 Module 05의 네 시나리오 명령이 모두 0으로 끝났을 때만 정확히 12개의 전체 raw 파일을 기대합니다.",
+    "Recover it from results/workshop.env or rerun the exact recovery steps from Module 03 before continuing.",
 ]
 
 for item in required_04:
@@ -143,6 +152,8 @@ for forbidden in ("$WORKSHOP_RG", "STANDBY_POOL_NAME", "--pool-name", "--pool-he
 for path, text in ((module04, text04), (module05, text05)):
     if "set -euo pipefail" in text:
         raise SystemExit(f"{path.name} must not enable persistent set -euo pipefail in interactive steps")
+    if "Keep this Cloud Shell open" in text:
+        raise SystemExit(f"{path.name} must not require a single uninterrupted Cloud Shell session")
 
 allowed_run_benchmark_flags = {
     "--scenario",

@@ -49,6 +49,8 @@ required_readme_strings = [
     "VN2 Helm release: standby",
     "Warm UVM, cached image",
     "Mandatory cleanup",
+    "results/workshop.env",
+    "fresh Cloud Shell recovery",
 ]
 for required in required_readme_strings:
     if required not in readme_text:
@@ -121,5 +123,16 @@ for module, path in module_files.items():
         raise SystemExit(f"{path.name} is missing previous link to {previous_target}")
     if f"]({next_target})" not in text:
         raise SystemExit(f"{path.name} is missing next link to {next_target}")
+
+if "중간에 shell/session을 바꾸지 않았다." in readme_text:
+    raise SystemExit("README must not require a single uninterrupted shell session anymore")
+
+for required in (
+    "results/workshop.env is the authoritative workshop state",
+    "source results/workshop.env",
+    "fresh Cloud Shell recovery",
+):
+    if required not in readme_text:
+        raise SystemExit(f"README is missing workshop state guidance: {required}")
 
 PY

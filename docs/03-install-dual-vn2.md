@@ -10,46 +10,87 @@
 
 ## 시작 전 상태
 
-- Module 02에서 선언한 `RG`, `AKS`, `CG_SUBNET` shell 변수가 아직 현재 Cloud Shell 세션에 남아 있다.
+- Module 02가 성공해 `results/workshop.env` 가 존재한다.
+- `results/workshop.env` 에는 최소한 `RG`, `AKS`, `CG_SUBNET`, `K8S_VERSION` 이 저장되어 있다.
 - `CG_SUBNET` 값은 계속 `cg` 여야 한다.
-- `az aks get-credentials` 가 이미 끝나 있어 현재 `kubectl` 컨텍스트가 이 실습용 AKS 를 가리킨다.
+- `az aks get-credentials` 가 이미 끝나 있어 현재 `kubectl` 컨텍스트가 이 실습용 AKS 를 가리키거나, fresh Cloud Shell 에서 다시 불러올 준비가 되어 있다.
 - 일반 AKS 노드에 `benchmark-path=aks` 라벨이 이미 붙어 있다.
 - kubelet identity Contributor 권한과 Standby Pool Resource Provider RBAC가 이미 준비되었다.
 
 ## 진행 순서
 
-1. Module 02에서 만든 `$RG`, `cg` subnet, AKS context 를 그대로 재사용하는지 확인합니다.
+1. Module 02에서 만든 state file을 먼저 source 하고, `$RG`, `cg` subnet, AKS context 를 그대로 재사용하는지 확인합니다.
 2. VN2 Helm chart 저장소를 추가하고 chart version `1.3410.26081102` 를 고정합니다.
 3. `vn2-ondemand` 와 `vn2-standby` 를 서로 다른 namespace에 설치합니다.
 4. cluster-scoped `virtual-node-admission-controller` webhook 소유권이 첫 번째 release 하나에만 있는지 확인합니다.
 5. `benchmark-path=ondemand` 와 `benchmark-path=standby` virtual node 가 모두 Ready 인지 확인합니다.
 6. standby pool을 정확히 하나만 찾고 `STANDBY_POOL` 로 export 한 뒤, healthy/running 5 상태를 기다립니다.
+7. 마지막에는 Module 02 키를 보존한 채 `results/workshop.env` 를 원자적으로 다시 써서 Module 04 이후에도 같은 상태를 복구할 수 있게 합니다.
 
-### 1) Module 02 변수와 AKS context 연속성 확인
+### 1) Module 02 state file 과 AKS context 연속성 확인
 
 ```bash
 cd ~/aci-vn2-performance-workshop
 
-set -euo pipefail
+WORKSHOP_STATE="results/workshop.env"
 
-: "${RG:?Run Module 02 first and keep the same shell session.}"
-: "${AKS:?Run Module 02 first and keep the same shell session.}"
-: "${CG_SUBNET:?Run Module 02 first and keep the same shell session.}"
+persist_workshop_state() {
+  local STATE_TMP
+  STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
+  umask 077
+  {
+    printf 'export LOCATION=%q\n' "$LOCATION"
+    printf 'export RG=%q\n' "$RG"
+    printf 'export VNET=%q\n' "$VNET"
+    printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
+    printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
+    printf 'export NAT_NAME=%q\n' "$NAT_NAME"
+    printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
+    printf 'export AKS=%q\n' "$AKS"
+    printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+    printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
+    printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
+    printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
+    printf 'export STANDBY_RELEASE=%q\n' "$STANDBY_RELEASE"
+    printf 'export STANDBY_POOL=%q\n' "$STANDBY_POOL"
+  } >"$STATE_TMP"
+  chmod 600 "$STATE_TMP"
+  mv "$STATE_TMP" "$WORKSHOP_STATE"
+}
 
-if [[ "$CG_SUBNET" != "cg" ]]; then
-  printf 'Expected CG_SUBNET to stay cg, found %s\n' "$CG_SUBNET" >&2
+if [[ ! -f "$WORKSHOP_STATE" ]]; then
+  printf 'Missing %s. Run Module 02 first or recover the exact workshop state before continuing.\n' "$WORKSHOP_STATE" >&2
   exit 1
 fi
+source "$WORKSHOP_STATE"
 
-kubectl config current-context
-kubectl get nodes -L benchmark-path -o wide
+( set -euo pipefail
+  : "${RG:?Run Module 02 first or recover results/workshop.env before continuing.}"
+  : "${AKS:?Run Module 02 first or recover results/workshop.env before continuing.}"
+  : "${CG_SUBNET:?Run Module 02 first or recover results/workshop.env before continuing.}"
+
+  if [[ "$CG_SUBNET" != "cg" ]]; then
+    printf 'Expected CG_SUBNET to stay cg, found %s\n' "$CG_SUBNET" >&2
+    exit 1
+  fi
+
+  kubectl config current-context
+  kubectl get nodes -L benchmark-path -o wide
+)
 ```
 
-여기서는 새 변수를 다시 만들지 않습니다. Module 02의 `$RG` 와 AKS context 를 그대로 이어 받아야 이후 모듈의 resource group, subnet, pool 조회가 모두 같은 실습 환경을 가리킵니다.
+여기서는 새 변수를 다시 만들지 않습니다. Module 02의 `$RG` 와 AKS context 를 그대로 이어 받아야 이후 모듈의 resource group, subnet, pool 조회가 모두 같은 실습 환경을 가리킵니다. `results/workshop.env is the authoritative workshop state` 이므로 fresh Cloud Shell 에서는 먼저 이 파일을 source 한 뒤 같은 확인을 다시 실행합니다.
 
 ### 2) VN2 chart 저장소 추가와 pinned release 값 선언
 
 ```bash
+WORKSHOP_STATE="results/workshop.env"
+if [[ ! -f "$WORKSHOP_STATE" ]]; then
+  printf 'Missing %s. Recover the exact workshop state before continuing.\n' "$WORKSHOP_STATE" >&2
+  exit 1
+fi
+source "$WORKSHOP_STATE"
+
 helm repo add virtualnode \
   https://microsoft.github.io/virtualnodesOnAzureContainerInstances/
 helm repo update
@@ -66,30 +107,39 @@ export STANDBY_RELEASE="vn2-standby"
 `vn2-ondemand` 는 cluster-scoped admission controller 를 소유하는 첫 번째 release 입니다. `vn2-standby` 는 같은 클러스터에서 concurrent 하게 동작해야 하므로 release/namespace 를 분리하고 `admissionControllerReplicaCount=0` 으로 고정합니다.
 
 ```bash
-helm upgrade --install vn2-ondemand virtualnode/virtualnode \
-  --version "$VN2_CHART_VERSION" \
-  --namespace vn2-ondemand \
-  --create-namespace \
-  --set fullnameOverride=vn2-ondemand \
-  --set aciSubnetName=cg \
-  --set aciResourceGroupName="$RG" \
-  --set sandboxProviderType=OnDemand \
-  --set nodeLabels="benchmark-path=ondemand"
+WORKSHOP_STATE="results/workshop.env"
+if [[ ! -f "$WORKSHOP_STATE" ]]; then
+  printf 'Missing %s. Recover the exact workshop state before installing VN2.\n' "$WORKSHOP_STATE" >&2
+  exit 1
+fi
+source "$WORKSHOP_STATE"
 
-helm upgrade --install vn2-standby virtualnode/virtualnode \
-  --version "$VN2_CHART_VERSION" \
-  --namespace vn2-standby \
-  --create-namespace \
-  --set fullnameOverride=vn2-standby \
-  --set admissionControllerReplicaCount=0 \
-  --set aciSubnetName=cg \
-  --set aciResourceGroupName="$RG" \
-  --set sandboxProviderType=StandbyPool \
-  --set standbyPoolShareType=Node \
-  --set standbyPool.standbyPoolsCpu=1 \
-  --set standbyPool.standbyPoolsMemory=2 \
-  --set standbyPool.maxReadyCapacity=5 \
-  --set nodeLabels="benchmark-path=standby"
+( set -euo pipefail
+  helm upgrade --install vn2-ondemand virtualnode/virtualnode \
+    --version "$VN2_CHART_VERSION" \
+    --namespace vn2-ondemand \
+    --create-namespace \
+    --set fullnameOverride=vn2-ondemand \
+    --set aciSubnetName=cg \
+    --set aciResourceGroupName="$RG" \
+    --set sandboxProviderType=OnDemand \
+    --set nodeLabels="benchmark-path=ondemand"
+
+  helm upgrade --install vn2-standby virtualnode/virtualnode \
+    --version "$VN2_CHART_VERSION" \
+    --namespace vn2-standby \
+    --create-namespace \
+    --set fullnameOverride=vn2-standby \
+    --set admissionControllerReplicaCount=0 \
+    --set aciSubnetName=cg \
+    --set aciResourceGroupName="$RG" \
+    --set sandboxProviderType=StandbyPool \
+    --set standbyPoolShareType=Node \
+    --set standbyPool.standbyPoolsCpu=1 \
+    --set standbyPool.standbyPoolsMemory=2 \
+    --set standbyPool.maxReadyCapacity=5 \
+    --set nodeLabels="benchmark-path=standby"
+)
 ```
 
 Standby 쪽은 `standbyPool.standbyPoolsCpu=1`, `standbyPool.standbyPoolsMemory=2`, `standbyPool.maxReadyCapacity=5` 를 그대로 유지합니다. 이 `1 vCPU / 2 GiB` 프로필이 현재 구독이나 지역 API에서 거부되면 더 큰 값을 자동으로 고르지 말고, 실패 원인과 허용 가능한 최소 프로필을 먼저 확인해야 합니다.
@@ -101,6 +151,13 @@ Standby 쪽은 `standbyPool.standbyPoolsCpu=1`, `standbyPool.standbyPoolsMemory=
 아래 명령으로 실제 소유권을 확인합니다.
 
 ```bash
+WORKSHOP_STATE="results/workshop.env"
+if [[ ! -f "$WORKSHOP_STATE" ]]; then
+  printf 'Missing %s. Recover the exact workshop state before checking webhook ownership.\n' "$WORKSHOP_STATE" >&2
+  exit 1
+fi
+source "$WORKSHOP_STATE"
+
 kubectl get mutatingwebhookconfiguration virtual-node-admission-controller \
   -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}{" / "}{.metadata.annotations.meta\.helm\.sh/release-namespace}{"\n"}'
 
@@ -113,24 +170,33 @@ helm list -A | grep '^vn2-'
 ### 5) 두 virtual node Ready 확인과 path 라벨 점검
 
 ```bash
-for label in ondemand standby; do
-  deadline=$((SECONDS + 600))
+WORKSHOP_STATE="results/workshop.env"
+if [[ ! -f "$WORKSHOP_STATE" ]]; then
+  printf 'Missing %s. Recover the exact workshop state before waiting for virtual nodes.\n' "$WORKSHOP_STATE" >&2
+  exit 1
+fi
+source "$WORKSHOP_STATE"
 
-  until kubectl get nodes -l "benchmark-path=${label}" --no-headers 2>/dev/null | grep -q .; do
-    if (( SECONDS >= deadline )); then
-      printf 'Label benchmark-path=%s did not appear within 10 minutes\n' "${label}" >&2
-      kubectl get nodes -L benchmark-path -o wide >&2
-      kubectl get pods -A -o wide >&2
-      exit 1
-    fi
-    sleep 10
+( set -euo pipefail
+  for label in ondemand standby; do
+    deadline=$((SECONDS + 600))
+
+    until kubectl get nodes -l "benchmark-path=${label}" --no-headers 2>/dev/null | grep -q .; do
+      if (( SECONDS >= deadline )); then
+        printf 'Label benchmark-path=%s did not appear within 10 minutes\n' "${label}" >&2
+        kubectl get nodes -L benchmark-path -o wide >&2
+        kubectl get pods -A -o wide >&2
+        exit 1
+      fi
+      sleep 10
+    done
+
+    kubectl wait --for=condition=Ready node \
+      -l "benchmark-path=${label}" --timeout=10m
   done
 
-  kubectl wait --for=condition=Ready node \
-    -l "benchmark-path=${label}" --timeout=10m
-done
-
-kubectl get nodes -L benchmark-path -o wide
+  kubectl get nodes -L benchmark-path -o wide
+)
 ```
 
 `kubectl wait` 는 label 이 아직 안 생긴 짧은 race 구간에서는 바로 끝날 수 있으므로, 위처럼 먼저 label 등장을 최대 10분 동안 bounded polling 한 뒤 Ready wait 로 넘어갑니다.
@@ -149,25 +215,69 @@ virtual-node-standby           Ready    agent    ...   v1.34.x   standby
 ### 6) standby pool 하나를 정확히 찾고 `STANDBY_POOL` export
 
 ```bash
-mapfile -t POOLS < <(az standby-container-group-pool list \
-  --resource-group "$RG" \
-  --query '[].name' -o tsv)
+WORKSHOP_STATE="results/workshop.env"
 
-test "${#POOLS[@]}" -eq 1 || {
-  printf 'Expected exactly one standby pool in %s, found %s\n' "$RG" "${#POOLS[@]}" >&2
-  az standby-container-group-pool list --resource-group "$RG" --output table >&2
-  exit 1
+persist_workshop_state() {
+  local STATE_TMP
+  STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
+  umask 077
+  {
+    printf 'export LOCATION=%q\n' "$LOCATION"
+    printf 'export RG=%q\n' "$RG"
+    printf 'export VNET=%q\n' "$VNET"
+    printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
+    printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
+    printf 'export NAT_NAME=%q\n' "$NAT_NAME"
+    printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
+    printf 'export AKS=%q\n' "$AKS"
+    printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+    printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
+    printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
+    printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
+    printf 'export STANDBY_RELEASE=%q\n' "$STANDBY_RELEASE"
+    printf 'export STANDBY_POOL=%q\n' "$STANDBY_POOL"
+  } >"$STATE_TMP"
+  chmod 600 "$STATE_TMP"
+  mv "$STATE_TMP" "$WORKSHOP_STATE"
 }
 
-export STANDBY_POOL="${POOLS[0]}"
-printf 'STANDBY_POOL=%s\n' "$STANDBY_POOL"
+if [[ ! -f "$WORKSHOP_STATE" ]]; then
+  printf 'Missing %s. Recover the exact workshop state before locating the standby pool.\n' "$WORKSHOP_STATE" >&2
+  exit 1
+fi
+source "$WORKSHOP_STATE"
+
+( set -euo pipefail
+  mapfile -t POOLS < <(az standby-container-group-pool list \
+    --resource-group "$RG" \
+    --query '[].name' -o tsv)
+
+  test "${#POOLS[@]}" -eq 1 || {
+    printf 'Expected exactly one standby pool in %s, found %s\n' "$RG" "${#POOLS[@]}" >&2
+    az standby-container-group-pool list --resource-group "$RG" --output table >&2
+    exit 1
+  }
+
+  export STANDBY_POOL="${POOLS[0]}"
+  printf 'STANDBY_POOL=%s\n' "$STANDBY_POOL"
+  persist_workshop_state
+)
+
+source "$WORKSHOP_STATE"
 ```
 
-이 변수는 다음 모듈에서 그대로 재사용합니다. 이름을 다른 변수로 바꾸지 말고 `STANDBY_POOL` 하나만 유지해야 `run-benchmark.sh`, pool recycle, image cache 단계가 같은 대상을 가리킵니다.
+이 변수는 다음 모듈에서 그대로 재사용합니다. 이름을 다른 변수로 바꾸지 말고 `STANDBY_POOL` 하나만 유지해야 `run-benchmark.sh`, pool recycle, image cache 단계가 같은 대상을 가리킵니다. Module 03는 이전 파일 끝에 export 를 덧붙이지 않고 전체 state file 을 원자적으로 다시 써서 이전 키와 새 키가 ambiguity 없이 하나씩만 남게 합니다.
 
 ### 7) healthy standby pool 과 running 5 확인
 
 ```bash
+WORKSHOP_STATE="results/workshop.env"
+if [[ ! -f "$WORKSHOP_STATE" ]]; then
+  printf 'Missing %s. Recover the exact workshop state before validating the standby pool.\n' "$WORKSHOP_STATE" >&2
+  exit 1
+fi
+source "$WORKSHOP_STATE"
+
 ./scripts/check-standby-pool.sh \
   --resource-group "$RG" \
   --name "$STANDBY_POOL" \
@@ -198,6 +308,7 @@ az standby-container-group-pool status \
 - `benchmark-path=aks`, `benchmark-path=ondemand`, `benchmark-path=standby` 가 `kubectl get nodes -L benchmark-path -o wide` 에서 모두 보인다.
 - ondemand/standby virtual node 가 둘 다 Ready 상태다.
 - standby pool이 정확히 하나만 발견되었고 `export STANDBY_POOL=...` 가 성공했다.
+- `results/workshop.env` 가 Module 02 키를 유지한 채 `VN2_CHART_VERSION`, `ONDEMAND_RELEASE`, `STANDBY_RELEASE`, `STANDBY_POOL` 로 다시 저장되었다.
 - `./scripts/check-standby-pool.sh --resource-group "$RG" --name "$STANDBY_POOL" --expect-running 5 --timeout-seconds 1200 --interval-seconds 15` 가 성공했다.
 - 다음 모듈에서 `STANDBY_POOL` 과 `$RG` 를 그대로 재사용할 준비가 되었다.
 

@@ -11,7 +11,7 @@
 ## 시작 전 상태
 
 - Module 03을 완료해 `benchmark-path=aks`, `benchmark-path=ondemand`, `benchmark-path=standby` 가 모두 Ready 다.
-- Module 02와 Module 03에서 사용한 같은 Cloud Shell 세션을 유지하고 있어 `$RG` 와 `$STANDBY_POOL` 이 아직 살아 있다.
+- Module 02와 Module 03에서 저장한 `results/workshop.env` 가 존재하며, fresh Cloud Shell 에서도 다시 source 할 수 있다.
 - `~/aci-vn2-performance-workshop` 저장소 루트에서 스크립트를 실행할 수 있다.
 - `results/` 아래의 이전 raw evidence를 지우지 않고 새 run을 이어서 보관할 준비가 되었다.
 
@@ -29,13 +29,18 @@
 ```bash
 cd ~/aci-vn2-performance-workshop
 
+WORKSHOP_STATE="results/workshop.env"
+if [[ -f "$WORKSHOP_STATE" ]]; then
+  source "$WORKSHOP_STATE"
+fi
+
 require_workshop_vars() {
   if [[ -z "${RG:-}" ]]; then
-    printf 'RG is not set. Keep this Cloud Shell open and recover it from Module 02 before continuing.\n' >&2
+    printf 'RG is not set. Recover it from results/workshop.env or rerun the exact recovery steps from Module 02 before continuing.\n' >&2
     return 1
   fi
   if [[ -z "${STANDBY_POOL:-}" ]]; then
-    printf 'STANDBY_POOL is not set. Keep this Cloud Shell open and recover it from Module 03 before continuing.\n' >&2
+    printf 'STANDBY_POOL is not set. Recover it from results/workshop.env or rerun the exact recovery steps from Module 03 before continuing.\n' >&2
     return 1
   fi
   printf 'RG=%s\nSTANDBY_POOL=%s\n' "$RG" "$STANDBY_POOL"
@@ -79,7 +84,7 @@ mkdir -p results
 require_workshop_vars
 ```
 
-여기서는 persistent errexit 설정을 켜지 않습니다. `$RG` 또는 `$STANDBY_POOL` 이 비어 있어도 Cloud Shell 자체가 닫히지 않게 해야 나중에 같은 세션에서 복구 절차를 계속할 수 있습니다.
+여기서는 persistent errexit 설정을 켜지 않습니다. `$RG` 또는 `$STANDBY_POOL` 이 비어 있어도 현재 shell 이 닫히지 않게 해야 `results/workshop.env` 복구나 Module 02/03 recovery 절차를 곧바로 이어갈 수 있습니다.
 
 ### 2) regular AKS 기준선 3회 실행
 
@@ -98,7 +103,7 @@ case "$AKS_RC" in
   2)
     printf 'RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.\n' >&2
     printf 'The runner stops remaining runs after the first failed sample.\n' >&2
-    printf 'Keep this Cloud Shell session open, inspect results/raw and results/diagnostics, archive the fixed paths below, and then rerun the standard command.\n' >&2
+    printf 'Inspect results/raw and results/diagnostics, archive the fixed paths below, and then rerun the standard command.\n' >&2
     ;;
   *)
     printf 'Unexpected aks benchmark failure RC=%s\n' "$AKS_RC" >&2
@@ -159,7 +164,7 @@ case "$ONDEMAND_RC" in
   2)
     printf 'RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.\n' >&2
     printf 'The runner stops remaining runs after the first failed sample.\n' >&2
-    printf 'Keep this Cloud Shell session open, inspect the evidence, archive the fixed paths below, and then rerun the standard command.\n' >&2
+    printf 'Inspect the evidence, archive the fixed paths below, and then rerun the standard command.\n' >&2
     ;;
   *)
     printf 'Unexpected vn2-ondemand benchmark failure RC=%s\n' "$ONDEMAND_RC" >&2

@@ -10,7 +10,7 @@
 
 ## 시작 전 상태
 
-- Module 03에서 export 한 같은 `$RG` 와 `$STANDBY_POOL` 이 현재 Cloud Shell 세션에 남아 있다.
+- Module 03에서 저장한 `results/workshop.env` 가 존재하고, 그 안에 같은 `$RG` 와 `$STANDBY_POOL` 이 들어 있다.
 - standby virtual node 와 standby pool이 healthy 상태이며 ready capacity 5를 다시 채울 quota가 있다.
 - Module 04 결과가 이미 `results/raw/` 와 `results/diagnostics/` 아래에 보관되어 있다.
 - 실패나 timeout evidence를 삭제하지 않겠다는 원칙을 유지한다.
@@ -31,13 +31,18 @@
 ```bash
 cd ~/aci-vn2-performance-workshop
 
+WORKSHOP_STATE="results/workshop.env"
+if [[ -f "$WORKSHOP_STATE" ]]; then
+  source "$WORKSHOP_STATE"
+fi
+
 require_workshop_vars() {
   if [[ -z "${RG:-}" ]]; then
-    printf 'RG is not set. Keep this Cloud Shell open and recover it from Module 02 before continuing.\n' >&2
+    printf 'RG is not set. Recover it from results/workshop.env or rerun the exact recovery steps from Module 02 before continuing.\n' >&2
     return 1
   fi
   if [[ -z "${STANDBY_POOL:-}" ]]; then
-    printf 'STANDBY_POOL is not set. Keep this Cloud Shell open and recover it from Module 03 before continuing.\n' >&2
+    printf 'STANDBY_POOL is not set. Recover it from results/workshop.env or rerun the exact recovery steps from Module 03 before continuing.\n' >&2
     return 1
   fi
   printf 'RG=%s\nSTANDBY_POOL=%s\n' "$RG" "$STANDBY_POOL"
@@ -92,11 +97,11 @@ check_pool_state() {
       ;;
     2)
       printf 'RC=2 means the standby pool reported degraded health.\n' >&2
-      printf 'Treat the JSON output as evidence, keep this Cloud Shell open, recover the pool, and rerun the same check.\n' >&2
+      printf 'Treat the JSON output as evidence, recover the pool, and rerun the same check.\n' >&2
       ;;
     3)
       printf 'RC=3 means the standby pool did not reach the expected running count before timeout.\n' >&2
-      printf 'Treat the JSON output as evidence, keep this Cloud Shell open, wait for recycle/refill or troubleshoot, and rerun the same check.\n' >&2
+      printf 'Treat the JSON output as evidence, wait for recycle/refill or troubleshoot, and rerun the same check.\n' >&2
       ;;
     *)
       printf '%s returned unexpected RC=%s\n' "$label" "$POOL_RC" >&2
@@ -110,7 +115,7 @@ mkdir -p results
 require_workshop_vars
 ```
 
-여기서도 persistent errexit 설정을 켜지 않습니다. `check-standby-pool.sh` 의 exit code `2/3` 는 pool health/recovery evidence이며, shell 자체를 잃어버릴 이유가 아닙니다.
+여기서도 persistent errexit 설정을 켜지 않습니다. `check-standby-pool.sh` 의 exit code `2/3` 는 pool health/recovery evidence이며, shell 자체를 잃어버릴 이유가 아닙니다. fresh Cloud Shell 에서 재개했다면 먼저 `results/workshop.env` 를 source 한 뒤 helper block 전체를 다시 실행해도 됩니다.
 
 helper 재사용 형태는 아래와 같습니다.
 
@@ -159,7 +164,7 @@ case "$UNCACHED_RC" in
     ;;
   3)
     printf 'RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.\n' >&2
-    printf 'Preserve this Cloud Shell session, run check_pool_state "standby healthy check" 5 (or the matching recycle/refill check), recover/refill the pool, archive only any paths that actually exist for this scenario, and then retry only vn2-standby-uncached.\n' >&2
+    printf 'If results/workshop.env was restored in a fresh Cloud Shell, run check_pool_state "standby healthy check" 5 (or the matching recycle/refill check), recover/refill the pool, archive only any paths that actually exist for this scenario, and then retry only vn2-standby-uncached.\n' >&2
     ;;
   *)
     printf 'Unexpected vn2-standby-uncached benchmark failure RC=%s\n' "$UNCACHED_RC" >&2
@@ -286,7 +291,7 @@ case "$CACHED_RC" in
     ;;
   3)
     printf 'RC=3 means the internal standby pool did not reach the expected running count before timeout during the pre-run or post-run check.\n' >&2
-    printf 'Preserve this Cloud Shell session, run check_pool_state "standby healthy check" 5 (or the matching recycle/refill check), recover/refill the pool, archive only any paths that actually exist for this scenario, and then retry only vn2-standby-cached.\n' >&2
+    printf 'If results/workshop.env was restored in a fresh Cloud Shell, run check_pool_state "standby healthy check" 5 (or the matching recycle/refill check), recover/refill the pool, archive only any paths that actually exist for this scenario, and then retry only vn2-standby-cached.\n' >&2
     ;;
   *)
     printf 'Unexpected vn2-standby-cached benchmark failure RC=%s\n' "$CACHED_RC" >&2

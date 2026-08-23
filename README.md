@@ -17,6 +17,19 @@ cd ~/aci-vn2-performance-workshop
 
 실습은 Azure Portal Cloud Shell Bash를 기준으로 작성되었습니다. 로컬 터미널을 사용할 경우 `az`, `kubectl`, `helm`, `jq`, `python3`, `git` 버전이 Module 01 기준을 만족해야 합니다.
 
+## Persisted workshop state
+
+`results/workshop.env is the authoritative workshop state`. Module 02가 이 파일을 원자적으로 만들고, Module 03이 standby 관련 키를 같은 파일에 다시 기록합니다. 이후 participant 모듈은 가능하면 먼저 이 파일을 읽습니다.
+
+fresh Cloud Shell recovery 가 필요하면 저장소 루트에서 아래처럼 다시 불러오십시오.
+
+```bash
+cd ~/aci-vn2-performance-workshop
+source results/workshop.env
+```
+
+`results/workshop.env` 가 없다면 Module 07의 fresh-session recovery 절차로 정확한 workshop RG를 다시 확인한 뒤 파일을 복구하고 진행합니다.
+
 ## 아키텍처
 
 ```mermaid
@@ -89,6 +102,7 @@ Module 01에서 provider 등록, quota, VM SKU, Helm/Kubernetes 도구 버전을
 
 - [ ] Module 01에서 Owner 권한, provider 등록, 도구 버전, quota를 확인했다.
 - [ ] Module 02에서 AKS와 `cg` subnet, NAT Gateway, public IP를 준비했다.
+- [ ] Module 02와 Module 03에서 `results/workshop.env` 를 최신 값으로 저장했다.
 - [ ] Module 03에서 `benchmark-path=aks|ondemand|standby` 경로를 모두 준비했다.
 - [ ] Module 04와 Module 05에서 네 시나리오의 raw JSON evidence를 모두 만들었다.
 - [ ] Module 06에서 `results/summary.json`, `results/summary.csv`, `results/summary.md`를 생성했다.
@@ -98,7 +112,8 @@ Module 01에서 provider 등록, quota, VM SKU, Helm/Kubernetes 도구 버전을
 ## Operator-only smoke test checklist
 
 - [ ] Fresh Cloud Shell Bash session에서 이 저장소만 열고 시작했다.
-- [ ] Modules 01-07을 순서대로 끝냈고 중간에 shell/session을 바꾸지 않았다.
+- [ ] Modules 01-07을 순서대로 끝냈고 Module 02/03 이후 `results/workshop.env` 를 계속 최신 상태로 유지했다.
+- [ ] shell/session 이 바뀌었더라도 fresh Cloud Shell recovery 로 `source results/workshop.env` 후 같은 workshop state 를 다시 불러왔다.
 - [ ] `kubectl get nodes -L benchmark-path` 에서 two VN2 virtual nodes show Ready concurrently 상태를 확인했다.
 - [ ] `./scripts/check-standby-pool.sh -g "$RG" -n "$STANDBY_POOL" --expect-running 5 --timeout-seconds 1200 --interval-seconds 15` 로 Standby Pool running count is 5 임을 확인했다.
 - [ ] `find results/raw -maxdepth 1 -type f -name '*.json' | wc -l` 결과가 exactly 12 raw JSON files 이다.

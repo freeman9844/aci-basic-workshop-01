@@ -19,6 +19,9 @@ required_strings = [
     "1.3410.26081102",
     "vn2-ondemand",
     "vn2-standby",
+    "WORKSHOP_STATE=\"results/workshop.env\"",
+    "if [[ ! -f \"$WORKSHOP_STATE\" ]]; then",
+    "source \"$WORKSHOP_STATE\"",
     "--namespace vn2-ondemand",
     "--namespace vn2-standby",
     "--create-namespace",
@@ -67,6 +70,22 @@ required_strings = [
     "--query '[].name' -o tsv",
     "test \"${#POOLS[@]}\" -eq 1",
     "export STANDBY_POOL=\"${POOLS[0]}\"",
+    "printf 'export LOCATION=%q\\n' \"$LOCATION\"",
+    "printf 'export RG=%q\\n' \"$RG\"",
+    "printf 'export VNET=%q\\n' \"$VNET\"",
+    "printf 'export AKS_SUBNET=%q\\n' \"$AKS_SUBNET\"",
+    "printf 'export CG_SUBNET=%q\\n' \"$CG_SUBNET\"",
+    "printf 'export NAT_NAME=%q\\n' \"$NAT_NAME\"",
+    "printf 'export NAT_PIP_NAME=%q\\n' \"$NAT_PIP_NAME\"",
+    "printf 'export AKS=%q\\n' \"$AKS\"",
+    "printf 'export VM_SIZE=%q\\n' \"$VM_SIZE\"",
+    "printf 'export K8S_VERSION=%q\\n' \"$K8S_VERSION\"",
+    "printf 'export VN2_CHART_VERSION=%q\\n' \"$VN2_CHART_VERSION\"",
+    "printf 'export ONDEMAND_RELEASE=%q\\n' \"$ONDEMAND_RELEASE\"",
+    "printf 'export STANDBY_RELEASE=%q\\n' \"$STANDBY_RELEASE\"",
+    "printf 'export STANDBY_POOL=%q\\n' \"$STANDBY_POOL\"",
+    "chmod 600 \"$STATE_TMP\"",
+    "mv \"$STATE_TMP\" \"$WORKSHOP_STATE\"",
     "./scripts/check-standby-pool.sh \\",
     "--resource-group \"$RG\"",
     "--name \"$STANDBY_POOL\"",
@@ -81,6 +100,7 @@ required_strings = [
     "kubectl get events",
     "helm status vn2-standby -n vn2-standby",
     "az standby-container-group-pool status",
+    "results/workshop.env is the authoritative workshop state",
 ]
 
 forbidden_strings = [
@@ -90,6 +110,9 @@ forbidden_strings = [
     "nodeLabels.benchmark-path=standby",
     "check-standby-pool.sh -g",
     "kubectl get validatingwebhookconfiguration virtual-node-admission-controller",
+    "같은 Cloud Shell 세션에 남아 있다",
+    ">> \"$WORKSHOP_STATE\"",
+    "tee -a \"$WORKSHOP_STATE\"",
 ]
 
 for item in required_strings:

@@ -97,6 +97,9 @@ if csv_header not in text06:
     raise SystemExit("docs/06-analyze-results.md must document the exact summary.csv header")
 
 required_07 = [
+    "WORKSHOP_STATE=\"results/workshop.env\"",
+    "if [[ -f \"$WORKSHOP_STATE\" ]]; then",
+    "source \"$WORKSHOP_STATE\"",
     "scripts/cleanup.sh --resource-group \"$RG\" --yes",
     "az group exists --name \"$RG\"",
     "type the resource group name exactly to continue",
@@ -133,6 +136,11 @@ required_07 = [
     "billing-critical RG deletion",
     "WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.",
     "Cleanup completed with warnings.",
+    "fresh Cloud Shell recovery",
+    "az group list --query \"[?starts_with(name, 'rg-vn2-bench-')].[name, location]\" --output table",
+    "Never pass a wildcard or broad match into cleanup.",
+    "Save the recovered exact RG back into results/workshop.env before deleting anything.",
+    "printf 'export RG=%q\\n' \"$RG\"",
 ]
 
 for item in required_07:
@@ -154,6 +162,9 @@ for forbidden in ("$WORKSHOP_RG", "STANDBY_POOL_NAME"):
         raise SystemExit(f"docs/06-analyze-results.md must not contain outdated text: {forbidden}")
     if forbidden in text07:
         raise SystemExit(f"docs/07-limitations-troubleshooting-cleanup.md must not contain outdated text: {forbidden}")
+
+if "Cloud Shell 세션이 살아 있어" in text07:
+    raise SystemExit("docs/07-limitations-troubleshooting-cleanup.md must not require the original Cloud Shell session")
 
 if "- 이전: [Module 05](./05-standby-cache-benchmark.md)" not in text06:
     raise SystemExit("docs/06-analyze-results.md must link back to Module 05")

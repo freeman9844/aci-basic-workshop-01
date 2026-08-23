@@ -22,56 +22,57 @@
 3. `Standby Pool Resource Provider` 서비스 주체에 구독 범위 역할 세 개를 부여합니다.
 4. `scripts/preflight.sh` 로 도구 버전, Owner 권한, provider 등록, quota, VM SKU를 fail-fast 검증합니다.
 5. `results/environment.json` 을 확인하고 다음 모듈에서 그대로 재사용합니다.
+6. 모든 fail-fast 블록은 subshell keeps the interactive parent Cloud Shell safe 원칙으로 감쌉니다.
 
 ### 1) 워크숍 하루 전: provider 등록과 feature/GA 상태 확인
 
-아래 블록은 Cloud Shell Bash에서 그대로 실행할 수 있습니다. `set -euo pipefail` 를 사용하고, `ResourceNotFound` 가 나오면 preview feature가 GA로 전환된 상태로 해석합니다.
+아래 블록은 Cloud Shell Bash에서 그대로 실행할 수 있습니다. fail-fast 설정은 subshell 안에서만 켜고, `ResourceNotFound` 가 나오면 preview feature가 GA로 전환된 상태로 해석합니다.
 
 ```bash
 cd ~/aci-vn2-performance-workshop
 mkdir -p results
 
-set -euo pipefail
+( set -euo pipefail
+  az account show --output table
+  az provider register --namespace Microsoft.ContainerInstance --wait
+  az provider register --namespace Microsoft.StandbyPool --wait
 
-az account show --output table
-az provider register --namespace Microsoft.ContainerInstance --wait
-az provider register --namespace Microsoft.StandbyPool --wait
+  FEATURE_ERROR_FILE="results/standby-feature-show.stderr.log"
+  rm -f "$FEATURE_ERROR_FILE"
 
-FEATURE_ERROR_FILE="results/standby-feature-show.stderr.log"
-rm -f "$FEATURE_ERROR_FILE"
+  set +e
+  FEATURE_JSON="$(az feature show \
+    --namespace Microsoft.StandbyPool \
+    --name StandbyContainerGroupPoolPreview \
+    --output json 2>"$FEATURE_ERROR_FILE")"
+  FEATURE_RC=$?
+  set -e;
 
-set +e
-FEATURE_JSON="$(az feature show \
-  --namespace Microsoft.StandbyPool \
-  --name StandbyContainerGroupPoolPreview \
-  --output json 2>"$FEATURE_ERROR_FILE")"
-FEATURE_RC=$?
-set -e
-
-if [[ "$FEATURE_RC" -eq 0 ]]; then
-  FEATURE_STATE="$(jq -r '.properties.state' <<<"$FEATURE_JSON")"
-  if [[ -z "$FEATURE_STATE" || "$FEATURE_STATE" == "null" ]]; then
-    printf 'StandbyContainerGroupPoolPreview state could not be parsed.\n' >&2
-    exit 1
+  if [[ "$FEATURE_RC" -eq 0 ]]; then
+    FEATURE_STATE="$(jq -r '.properties.state' <<<"$FEATURE_JSON")"
+    if [[ -z "$FEATURE_STATE" || "$FEATURE_STATE" == "null" ]]; then
+      printf 'StandbyContainerGroupPoolPreview state could not be parsed.\n' >&2
+      exit 1
+    fi
+    if [[ "$FEATURE_STATE" != "Registered" ]]; then
+      az feature register \
+        --namespace Microsoft.StandbyPool \
+        --name StandbyContainerGroupPoolPreview
+      printf 'Feature registration was requested; wait until it is Registered before the workshop.\n' >&2
+      exit 1
+    fi
+  elif grep -qi 'ResourceNotFound' "$FEATURE_ERROR_FILE"; then
+    printf 'The preview feature is no longer exposed; provider registration is the current GA gate.\n'
+  else
+    cat "$FEATURE_ERROR_FILE" >&2
+    exit "$FEATURE_RC"
   fi
-  if [[ "$FEATURE_STATE" != "Registered" ]]; then
-    az feature register \
-      --namespace Microsoft.StandbyPool \
-      --name StandbyContainerGroupPoolPreview
-    printf 'Feature registration was requested; wait until it is Registered before the workshop.\n' >&2
-    exit 1
-  fi
-elif grep -qi 'ResourceNotFound' "$FEATURE_ERROR_FILE"; then
-  printf 'The preview feature is no longer exposed; provider registration is the current GA gate.\n'
-else
-  cat "$FEATURE_ERROR_FILE" >&2
-  exit "$FEATURE_RC"
-fi
 
-rm -f "$FEATURE_ERROR_FILE"
+  rm -f "$FEATURE_ERROR_FILE"
+)
 ```
 
-이 단계의 핵심은 역사적으로 `StandbyContainerGroupPoolPreview` 가 필요했던 구독과, 이제 feature 조회가 `ResourceNotFound` 로 끝나는 GA 구독을 둘 다 안전하게 처리하는 것입니다.
+이 단계의 핵심은 역사적으로 `StandbyContainerGroupPoolPreview` 가 필요했던 구독과, 이제 feature 조회가 `ResourceNotFound` 로 끝나는 GA 구독을 둘 다 안전하게 처리하는 것입니다. `set -e` 복구도 subshell 안에서만 일어나므로 interactive parent Cloud Shell 옵션은 바뀌지 않습니다.
 
 ### 2) 워크숍 하루 전: Standby Pool Resource Provider 서비스 주체 RBAC 준비
 
@@ -80,38 +81,38 @@ rm -f "$FEATURE_ERROR_FILE"
 ```bash
 cd ~/aci-vn2-performance-workshop
 
-set -euo pipefail
+( set -euo pipefail
+  SUB_ID="$(az account show --query id -o tsv)"
+  if [[ -z "$SUB_ID" ]]; then
+    printf 'Subscription ID could not be resolved.\n' >&2
+    exit 1
+  fi
+  SUB_SCOPE="/subscriptions/$SUB_ID"
 
-SUB_ID="$(az account show --query id -o tsv)"
-if [[ -z "$SUB_ID" ]]; then
-  printf 'Subscription ID could not be resolved.\n' >&2
-  exit 1
-fi
-SUB_SCOPE="/subscriptions/$SUB_ID"
+  SP_OBJECT_ID="$(az ad sp list \
+    --display-name 'Standby Pool Resource Provider' \
+    --query '[0].id' -o tsv)"
+  if ! test -n "$SP_OBJECT_ID"; then
+    printf 'Standby Pool Resource Provider service principal was not found.\n' >&2
+    exit 1
+  fi
 
-SP_OBJECT_ID="$(az ad sp list \
-  --display-name 'Standby Pool Resource Provider' \
-  --query '[0].id' -o tsv)"
-if ! test -n "$SP_OBJECT_ID"; then
-  printf 'Standby Pool Resource Provider service principal was not found.\n' >&2
-  exit 1
-fi
+  for ROLE in \
+    "Azure Container Instances Contributor" \
+    "Standby Container Group Pool Contributor" \
+    "Network Contributor"; do
+    az role assignment create \
+      --assignee-object-id "$SP_OBJECT_ID" \
+      --assignee-principal-type ServicePrincipal \
+      --role "$ROLE" \
+      --scope "$SUB_SCOPE"
+  done
 
-for ROLE in \
-  "Azure Container Instances Contributor" \
-  "Standby Container Group Pool Contributor" \
-  "Network Contributor"; do
-  az role assignment create \
+  az role assignment list \
     --assignee-object-id "$SP_OBJECT_ID" \
-    --assignee-principal-type ServicePrincipal \
-    --role "$ROLE" \
-    --scope "$SUB_SCOPE"
-done
-
-az role assignment list \
-  --assignee-object-id "$SP_OBJECT_ID" \
-  --scope "$SUB_SCOPE" \
-  --output table
+    --scope "$SUB_SCOPE" \
+    --output table
+)
 ```
 
 필수 역할은 다음 세 가지입니다.
@@ -126,9 +127,12 @@ az role assignment list \
 
 ```bash
 cd ~/aci-vn2-performance-workshop
-az account show --output table
-./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5
-cat results/environment.json
+
+( set -euo pipefail
+  az account show --output table
+  ./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5
+  cat results/environment.json
+)
 ```
 
 성공 예시는 다음과 같습니다.
@@ -162,6 +166,7 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 - Cloud Shell 또는 로컬 Bash 환경에서 필수 도구가 모두 실행된다.
 - `./scripts/preflight.sh --location koreacentral --vm-size Standard_D8s_v5` 가 성공했다.
 - `results/environment.json` 파일이 생성되었다.
+- fail-fast 블록이 끝난 뒤에도 interactive parent Cloud Shell 에는 persistent `set -e` / `set -u` 가 남지 않는다.
 - quota 부족, Owner 누락, provider 미등록 시 어떤 항목을 먼저 고쳐야 하는지 메모했다.
 
 ## 문제 해결

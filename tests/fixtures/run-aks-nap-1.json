@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "scenario": "aks-nap",
+  "run": 1,
+  "pods": [
+    {
+      "name": "bench-aks-nap-1-pod-1",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 120000.0,
+      "create_to_scheduled_ms": 90000.0,
+      "scheduled_to_ready_ms": 30000.0,
+      "phase": "Succeeded",
+      "node_name": "aks-workshop-nap-000000"
+    },
+    {
+      "name": "bench-aks-nap-1-pod-2",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 121000.0,
+      "create_to_scheduled_ms": 90000.0,
+      "scheduled_to_ready_ms": 31000.0,
+      "phase": "Succeeded",
+      "node_name": "aks-workshop-nap-000000"
+    },
+    {
+      "name": "bench-aks-nap-1-pod-3",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 122000.0,
+      "create_to_scheduled_ms": 90000.0,
+      "scheduled_to_ready_ms": 32000.0,
+      "phase": "Succeeded",
+      "node_name": "aks-workshop-nap-000000"
+    },
+    {
+      "name": "bench-aks-nap-1-pod-4",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 123000.0,
+      "create_to_scheduled_ms": 90000.0,
+      "scheduled_to_ready_ms": 33000.0,
+      "phase": "Succeeded",
+      "node_name": "aks-workshop-nap-000000"
+    },
+    {
+      "name": "bench-aks-nap-1-pod-5",
+      "terminal_state": "ready",
+      "create_to_ready_ms": 124000.0,
+      "create_to_scheduled_ms": 90000.0,
+      "scheduled_to_ready_ms": 34000.0,
+      "phase": "Succeeded",
+      "node_name": "aks-workshop-nap-000000"
+    }
+  ],
+  "batch": {
+    "first_ready_ms": 120000.0,
+    "all_ready_ms": 124000.0
+  }
+}

@@ -37,15 +37,15 @@ root = Path(sys.argv[1])
 expected_chart = "1.3410.26081102"
 expected_image = "mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
 expected_scenarios = {
-    "aks",
+    "aks-nap",
     "vn2-ondemand",
-    "vn2-standby-uncached",
+    "vn2-standby",
     "vn2-standby-cached",
 }
 expected_scenario_order = [
-    "aks",
+    "aks-nap",
     "vn2-ondemand",
-    "vn2-standby-uncached",
+    "vn2-standby",
     "vn2-standby-cached",
 ]
 expected_navigation = {

@@ -4,7 +4,7 @@
   "run": 1,
   "pods": [
     {
-      "name": "bench-cached-1-pod-1",
+      "name": "bench-vn2-standby-cached-1-pod-1",
       "terminal_state": "ready",
       "create_to_ready_ms": 3000.0,
       "create_to_scheduled_ms": 200.0,
@@ -13,7 +13,7 @@
       "node_name": "virtual-node-vn2-standby"
     },
     {
-      "name": "bench-cached-1-pod-2",
+      "name": "bench-vn2-standby-cached-1-pod-2",
       "terminal_state": "ready",
       "create_to_ready_ms": 3100.0,
       "create_to_scheduled_ms": 210.0,
@@ -22,7 +22,7 @@
       "node_name": "virtual-node-vn2-standby"
     },
     {
-      "name": "bench-cached-1-pod-3",
+      "name": "bench-vn2-standby-cached-1-pod-3",
       "terminal_state": "ready",
       "create_to_ready_ms": 3200.0,
       "create_to_scheduled_ms": 220.0,
@@ -31,7 +31,7 @@
       "node_name": "virtual-node-vn2-standby"
     },
     {
-      "name": "bench-cached-1-pod-4",
+      "name": "bench-vn2-standby-cached-1-pod-4",
       "terminal_state": "ready",
       "create_to_ready_ms": 3300.0,
       "create_to_scheduled_ms": 230.0,
@@ -40,7 +40,7 @@
       "node_name": "virtual-node-vn2-standby"
     },
     {
-      "name": "bench-cached-1-pod-5",
+      "name": "bench-vn2-standby-cached-1-pod-5",
       "terminal_state": "ready",
       "create_to_ready_ms": 3400.0,
       "create_to_scheduled_ms": 240.0,

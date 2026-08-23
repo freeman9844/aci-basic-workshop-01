@@ -10,6 +10,13 @@ SPEC = importlib.util.spec_from_file_location("collect_pod_latency", MODULE_PATH
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
+EXPECTED_SCENARIOS = {
+    "aks-nap",
+    "vn2-ondemand",
+    "vn2-standby",
+    "vn2-standby-cached",
+}
+
 
 def fixture(name):
     return json.loads((Path(__file__).parent / "fixtures" / name).read_text(encoding="utf-8"))
@@ -50,6 +57,9 @@ class CollectorTests(unittest.TestCase):
         root.mkdir(parents=True, exist_ok=True)
         return root
 
+    def test_valid_scenarios_match_benchmark_contract(self):
+        self.assertEqual(set(MODULE.VALID_SCENARIOS), EXPECTED_SCENARIOS)
+
     def test_records_first_observed_transition_only(self):
         observations = {}
         pending = fixture("pods-pending.json")
@@ -73,7 +83,14 @@ class CollectorTests(unittest.TestCase):
 
         def fake_runner(args, stdout=None, stderr=None, text=None):
             commands.append(args)
-            if args == ["kubectl", "apply", "--namespace", "vn2-bench-aks-1", "-f", str(manifest)]:
+            if args == [
+                "kubectl",
+                "apply",
+                "--namespace",
+                "vn2-bench-aks-nap-1",
+                "-f",
+                str(manifest),
+            ]:
                 return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
             if args[:4] == ["kubectl", "get", "pods", "-n"]:
                 return _FakeCompletedProcess(stdout=json.dumps(fixture("pods-ready.json")), stderr="", returncode=0)
@@ -83,9 +100,9 @@ class CollectorTests(unittest.TestCase):
 
         try:
             result_code = MODULE.collect_run(
-                scenario="aks",
+                scenario="aks-nap",
                 run_number=1,
-                namespace="vn2-bench-aks-1",
+                namespace="vn2-bench-aks-nap-1",
                 manifest=manifest,
                 expected_pods=1,
                 poll_interval_seconds=0.25,
@@ -99,7 +116,14 @@ class CollectorTests(unittest.TestCase):
 
             self.assertEqual(result_code, 0)
             self.assertIn(
-                ["kubectl", "apply", "--namespace", "vn2-bench-aks-1", "-f", str(manifest)],
+                [
+                    "kubectl",
+                    "apply",
+                    "--namespace",
+                    "vn2-bench-aks-nap-1",
+                    "-f",
+                    str(manifest),
+                ],
                 commands,
             )
         finally:
@@ -122,7 +146,7 @@ class CollectorTests(unittest.TestCase):
         ticks = iter([0, 250_000_000, 500_000_000, 750_000_000, 1_000_000_000])
 
         def fake_runner(args, stdout=None, stderr=None, text=None):
-            if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-aks-1"]:
+            if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-aks-nap-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
             if args[:4] == ["kubectl", "get", "pods", "-n"]:
                 return _FakeCompletedProcess(stdout=json.dumps(next(pod_snapshots)), stderr="", returncode=0)
@@ -132,9 +156,9 @@ class CollectorTests(unittest.TestCase):
 
         try:
             result_code = MODULE.collect_run(
-                scenario="aks",
+                scenario="aks-nap",
                 run_number=1,
-                namespace="vn2-bench-aks-1",
+                namespace="vn2-bench-aks-nap-1",
                 manifest=manifest,
                 expected_pods=2,
                 poll_interval_seconds=0.25,
@@ -247,7 +271,7 @@ class CollectorTests(unittest.TestCase):
         manifest.write_text(manifest_text("bench-1"), encoding="utf-8")
 
         def fake_runner(args, stdout=None, stderr=None, text=None):
-            if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-aks-1"]:
+            if args[:4] == ["kubectl", "apply", "--namespace", "vn2-bench-aks-nap-1"]:
                 return _FakeCompletedProcess(stdout="", stderr="", returncode=0)
             if args[:4] == ["kubectl", "get", "pods", "-n"]:
                 return _FakeCompletedProcess(stdout="{", stderr="", returncode=0)
@@ -257,9 +281,9 @@ class CollectorTests(unittest.TestCase):
 
         try:
             result_code = MODULE.collect_run(
-                scenario="aks",
+                scenario="aks-nap",
                 run_number=1,
-                namespace="vn2-bench-aks-1",
+                namespace="vn2-bench-aks-nap-1",
                 manifest=manifest,
                 expected_pods=1,
                 poll_interval_seconds=0.25,

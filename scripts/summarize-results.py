@@ -7,17 +7,17 @@ import statistics
 import sys
 from pathlib import Path
 
-VALID_SCENARIOS = {
-    "aks",
+VALID_SCENARIOS = (
+    "aks-nap",
     "vn2-ondemand",
-    "vn2-standby-uncached",
+    "vn2-standby",
     "vn2-standby-cached",
-}
+)
 
 SCENARIO_ORDER = [
-    "aks",
+    "aks-nap",
     "vn2-ondemand",
-    "vn2-standby-uncached",
+    "vn2-standby",
     "vn2-standby-cached",
 ]
 
@@ -208,7 +208,7 @@ def _apply_speedups(summaries):
     for scenario, summary in summaries.items():
         pod_median = summary.get("create_to_ready_ms", {}).get("median")
         batch_median = summary.get("batch_all_ready_ms", {}).get("median")
-        if scenario in {"vn2-standby-uncached", "vn2-standby-cached"}:
+        if scenario != "vn2-ondemand":
             summary["pod_speedup_ratio"] = speedup_ratio(ondemand_pod_median, pod_median)
             summary["batch_speedup_ratio"] = speedup_ratio(ondemand_batch_median, batch_median)
         else:

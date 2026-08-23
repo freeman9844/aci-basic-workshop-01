@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 VALID_SCENARIOS = (
-    "aks",
+    "aks-nap",
     "vn2-ondemand",
-    "vn2-standby-uncached",
+    "vn2-standby",
     "vn2-standby-cached",
 )
 

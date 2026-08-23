@@ -10,6 +10,19 @@ SPEC = importlib.util.spec_from_file_location("summarize_results", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
+EXPECTED_SCENARIOS = {
+    "aks-nap",
+    "vn2-ondemand",
+    "vn2-standby",
+    "vn2-standby-cached",
+}
+EXPECTED_SCENARIO_ORDER = [
+    "aks-nap",
+    "vn2-ondemand",
+    "vn2-standby",
+    "vn2-standby-cached",
+]
+
 
 class SummaryTests(unittest.TestCase):
     def _workspace(self, name):
@@ -18,6 +31,10 @@ class SummaryTests(unittest.TestCase):
             shutil.rmtree(root)
         root.mkdir(parents=True, exist_ok=True)
         return root
+
+    def test_scenario_contract_matches_benchmark_order(self):
+        self.assertEqual(set(MODULE.VALID_SCENARIOS), EXPECTED_SCENARIOS)
+        self.assertEqual(MODULE.SCENARIO_ORDER, EXPECTED_SCENARIO_ORDER)
 
     def test_nearest_rank_p95_uses_ceiling_rank(self):
         self.assertEqual(MODULE.nearest_rank([1, 2, 3, 4, 5], 95), 5)
@@ -64,11 +81,39 @@ class SummaryTests(unittest.TestCase):
     def test_speedup_uses_ondemand_over_cached(self):
         self.assertEqual(MODULE.speedup_ratio(12000.0, 3000.0), 4.0)
 
+    def test_apply_speedups_uses_vn2_ondemand_for_all_candidates(self):
+        summaries = {
+            "aks-nap": {
+                "create_to_ready_ms": {"median": 120000.0},
+                "batch_all_ready_ms": {"median": 130000.0},
+            },
+            "vn2-ondemand": {
+                "create_to_ready_ms": {"median": 60000.0},
+                "batch_all_ready_ms": {"median": 65000.0},
+            },
+            "vn2-standby": {
+                "create_to_ready_ms": {"median": 10000.0},
+                "batch_all_ready_ms": {"median": 20000.0},
+            },
+            "vn2-standby-cached": {
+                "create_to_ready_ms": {"median": 5000.0},
+                "batch_all_ready_ms": {"median": 8000.0},
+            },
+        }
+
+        MODULE._apply_speedups(summaries)
+
+        self.assertEqual(summaries["aks-nap"]["pod_speedup_ratio"], 0.5)
+        self.assertEqual(summaries["aks-nap"]["batch_speedup_ratio"], 0.5)
+        self.assertEqual(summaries["vn2-standby"]["pod_speedup_ratio"], 6.0)
+        self.assertEqual(summaries["vn2-standby-cached"]["batch_speedup_ratio"], 8.125)
+        self.assertIsNone(summaries["vn2-ondemand"]["pod_speedup_ratio"])
+
     def test_summarize_scenario_raises_for_invalid_schema_or_scenario(self):
         runs_invalid_schema = [
             {
                 "schema_version": 2,
-                "scenario": "aks",
+                "scenario": "aks-nap",
                 "pods": [],
                 "batch": {},
             }
@@ -95,7 +140,7 @@ class SummaryTests(unittest.TestCase):
             json.dumps(
                 {
                     "schema_version": 1,
-                    "scenario": "aks",
+                    "scenario": "aks-nap",
                     "pods": [],
                     "batch": {},
                 }

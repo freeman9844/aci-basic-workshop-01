@@ -13,6 +13,10 @@ spec:
     - key: virtual-kubelet.io/provider
       operator: Exists
       effect: NoSchedule
+    - key: benchmark-path
+      operator: Equal
+      value: aks-nap
+      effect: NoSchedule
   containers:
     - name: benchmark
       image: mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826

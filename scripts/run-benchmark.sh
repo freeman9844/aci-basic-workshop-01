@@ -6,12 +6,16 @@ KUBECTL_BIN="${KUBECTL_BIN:-kubectl}"
 AZ_BIN="${AZ_BIN:-az}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 CHECK_STANDBY_BIN="${CHECK_STANDBY_BIN:-$ROOT/scripts/check-standby-pool.sh}"
+CHECK_NAP_BIN="${CHECK_NAP_BIN:-$ROOT/scripts/check-nap-capacity.sh}"
 COLLECTOR_SCRIPT="${COLLECTOR_SCRIPT:-$ROOT/scripts/collect-pod-latency.py}"
 TEMPLATE_PATH="$ROOT/manifests/benchmark-pod-template.yaml"
 
 EXPECTED_PODS="${EXPECTED_PODS:-5}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-0.25}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-300}"
+NAP_POD_TIMEOUT_SECONDS="${NAP_POD_TIMEOUT_SECONDS:-900}"
+NAP_RESET_TIMEOUT_SECONDS="${NAP_RESET_TIMEOUT_SECONDS:-1200}"
+NAP_INTERVAL_SECONDS="${NAP_INTERVAL_SECONDS:-15}"
 STANDBY_TIMEOUT_SECONDS="${STANDBY_TIMEOUT_SECONDS:-1200}"
 STANDBY_INTERVAL_SECONDS="${STANDBY_INTERVAL_SECONDS:-15}"
 NAMESPACE_WAIT_TIMEOUT_SECONDS="${NAMESPACE_WAIT_TIMEOUT_SECONDS:-120}"
@@ -22,6 +26,7 @@ runs=""
 output_dir=""
 resource_group=""
 standby_pool=""
+scenario_timeout_seconds=""
 render_only="false"
 work_dir=""
 
@@ -33,7 +38,7 @@ RUN_WAIT_STATUS=0
 
 usage() {
   cat <<'EOF'
-Usage: run-benchmark.sh --scenario NAME --runs N --output-dir DIR [--render-only] [--resource-group RG --standby-pool NAME]
+Usage: run-benchmark.sh --scenario NAME --runs N --output-dir DIR [--scenario-timeout-seconds N] [--render-only] [--resource-group RG --standby-pool NAME]
 EOF
 }
 
@@ -74,6 +79,11 @@ while (($#)); do
       standby_pool="$2"
       shift 2
       ;;
+    --scenario-timeout-seconds)
+      require_value "$1" "${2-}"
+      scenario_timeout_seconds="$2"
+      shift 2
+      ;;
     --render-only)
       render_only="true"
       shift
@@ -103,15 +113,29 @@ if ! [[ "$runs" =~ ^[1-9][0-9]*$ ]]; then
   exit 64
 fi
 
+if [[ -n "$scenario_timeout_seconds" ]] \
+  && ! [[ "$scenario_timeout_seconds" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'ERROR: --scenario-timeout-seconds must be a positive integer\n' >&2
+  exit 64
+fi
+
 case "$scenario" in
-  aks) node_path="aks" ;;
+  aks-nap) node_path="aks-nap" ;;
   vn2-ondemand) node_path="ondemand" ;;
-  vn2-standby-uncached|vn2-standby-cached) node_path="standby" ;;
+  vn2-standby|vn2-standby-cached) node_path="standby" ;;
   *)
     printf 'ERROR: unsupported scenario: %s\n' "$scenario" >&2
     exit 64
     ;;
 esac
+
+collector_timeout="$TIMEOUT_SECONDS"
+if [[ "$scenario" == "aks-nap" ]]; then
+  collector_timeout="$NAP_POD_TIMEOUT_SECONDS"
+fi
+if [[ -n "$scenario_timeout_seconds" ]]; then
+  collector_timeout="$scenario_timeout_seconds"
+fi
 
 if [[ ! -f "$TEMPLATE_PATH" ]]; then
   printf 'ERROR: missing manifest template: %s\n' "$TEMPLATE_PATH" >&2
@@ -141,6 +165,7 @@ render_manifest() {
 }
 
 wait_for_standby_pool() {
+  local output_path="$1"
   if [[ "$node_path" != "standby" ]]; then
     return 0
   fi
@@ -154,7 +179,21 @@ wait_for_standby_pool() {
     --name "$standby_pool" \
     --expect-running 5 \
     --timeout-seconds "$STANDBY_TIMEOUT_SECONDS" \
-    --interval-seconds "$STANDBY_INTERVAL_SECONDS" >/dev/null
+    --interval-seconds "$STANDBY_INTERVAL_SECONDS" >"$output_path"
+}
+
+wait_for_nap_zero_capacity() {
+  local output_path="$1"
+  if [[ "$scenario" != "aks-nap" ]]; then
+    return 0
+  fi
+
+  "$CHECK_NAP_BIN" \
+    --name workshop-nap \
+    --expect-nodes 0 \
+    --expect-nodeclaims 0 \
+    --timeout-seconds "$NAP_RESET_TIMEOUT_SECONDS" \
+    --interval-seconds "$NAP_INTERVAL_SECONDS" >"$output_path"
 }
 
 cleanup_work_dir() {
@@ -266,7 +305,42 @@ capture_diagnostics() {
     fi
   fi
 
-  if [[ -n "$resource_group" ]]; then
+  if [[ "$scenario" == "aks-nap" ]]; then
+    if capture_command_record \
+      "$diagnostics_dir/nap-nodepool.yaml" \
+      "$KUBECTL_BIN" get nodepool workshop-nap -o yaml; then
+      :
+    else
+      command_status=$?
+      if [[ "$status" -eq 0 ]]; then
+        status="$command_status"
+      fi
+    fi
+
+    if capture_command_record \
+      "$diagnostics_dir/nap-nodeclaims.yaml" \
+      "$KUBECTL_BIN" get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o yaml; then
+      :
+    else
+      command_status=$?
+      if [[ "$status" -eq 0 ]]; then
+        status="$command_status"
+      fi
+    fi
+
+    if capture_command_record \
+      "$diagnostics_dir/nap-events.txt" \
+      "$KUBECTL_BIN" get events -A --field-selector source=karpenter-events; then
+      :
+    else
+      command_status=$?
+      if [[ "$status" -eq 0 ]]; then
+        status="$command_status"
+      fi
+    fi
+  fi
+
+  if [[ "$scenario" == vn2-* && -n "$resource_group" ]]; then
     if capture_command_record \
       "$diagnostics_dir/az-container-list.json" \
       "$AZ_BIN" container list --resource-group "$resource_group" --output json; then
@@ -316,7 +390,7 @@ run_single_benchmark() {
     --manifest "$manifest_path" \
     --expected-pods "$EXPECTED_PODS" \
     --poll-interval "$POLL_INTERVAL_SECONDS" \
-    --timeout-seconds "$TIMEOUT_SECONDS" \
+    --timeout-seconds "$collector_timeout" \
     --output "$raw_path"
   RUN_COLLECTOR_STATUS=$?
 
@@ -366,16 +440,24 @@ mkdir -p "$work_dir"
 trap cleanup_work_dir EXIT
 
 for run_number in $(seq 1 "$runs"); do
-  if wait_for_standby_pool; then
+  manifest_path="$work_dir/${scenario}-run-${run_number}.yaml"
+  raw_path="$output_dir/raw/${scenario}-run-${run_number}.json"
+  diagnostics_dir="$output_dir/diagnostics/${scenario}-run-${run_number}"
+  namespace="vn2-bench-${scenario_slug}-r${run_number}-$(date +%s)-$$"
+
+  mkdir -p "$diagnostics_dir"
+
+  if wait_for_nap_zero_capacity "$diagnostics_dir/nap-precheck.json"; then
     :
   else
     exit "$?"
   fi
 
-  manifest_path="$work_dir/${scenario}-run-${run_number}.yaml"
-  raw_path="$output_dir/raw/${scenario}-run-${run_number}.json"
-  diagnostics_dir="$output_dir/diagnostics/${scenario}-run-${run_number}"
-  namespace="vn2-bench-${scenario_slug}-r${run_number}-$(date +%s)-$$"
+  if wait_for_standby_pool "$diagnostics_dir/standby-precheck.json"; then
+    :
+  else
+    exit "$?"
+  fi
 
   render_manifest "$run_number" "$manifest_path"
 
@@ -386,8 +468,15 @@ for run_number in $(seq 1 "$runs"); do
   fi
 
   post_run_standby_status=0
+  post_run_nap_status=0
   if [[ "$RUN_CREATE_STATUS" -eq 0 ]]; then
-    if wait_for_standby_pool; then
+    if wait_for_nap_zero_capacity "$diagnostics_dir/nap-postcheck.json"; then
+      :
+    else
+      post_run_nap_status=$?
+    fi
+
+    if wait_for_standby_pool "$diagnostics_dir/standby-postcheck.json"; then
       :
     else
       post_run_standby_status=$?
@@ -402,6 +491,9 @@ for run_number in $(seq 1 "$runs"); do
   fi
   if [[ "$post_run_standby_status" -ne 0 ]]; then
     exit "$post_run_standby_status"
+  fi
+  if [[ "$post_run_nap_status" -ne 0 ]]; then
+    exit "$post_run_nap_status"
   fi
 done
 

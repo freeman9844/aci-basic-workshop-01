@@ -20,6 +20,14 @@ printf '{"health":"healthy","running":5}\n'
 FAKE_STANDBY
 chmod +x "$TMP/bin/check-standby-pool.sh"
 
+cat >"$TMP/bin/check-nap-capacity.sh" <<'FAKE_NAP'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> "$TEST_LOG_DIR/nap.log"
+printf '{"health":"ready","node_pool":"workshop-nap","nodes":0,"nodeclaims":0,"ready":true}\n'
+FAKE_NAP
+chmod +x "$TMP/bin/check-nap-capacity.sh"
+
 cat >"$TMP/bin/az" <<'FAKE_AZ'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -117,6 +125,12 @@ case "$cmd $subcmd" in
     fi
     printf '{"items":[{"metadata":{"name":"node-1"}}]}\n'
     ;;
+  "get nodepool")
+    printf 'apiVersion: karpenter.sh/v1\nkind: NodePool\nmetadata:\n  name: workshop-nap\n'
+    ;;
+  "get nodeclaims")
+    printf 'apiVersion: v1\nitems: []\n'
+    ;;
   "get namespace")
     namespace="${3:?}"
     if [[ -e "$TEST_STATE_DIR/ns-$namespace" ]]; then
@@ -141,6 +155,7 @@ chmod +x "$TMP/bin/kubectl"
 
 reset_logs() {
   : > "$TMP/logs/standby.log"
+  : > "$TMP/logs/nap.log"
   : > "$TMP/logs/az.log"
   : > "$TMP/logs/collector.log"
   : > "$TMP/logs/kubectl.log"
@@ -161,6 +176,7 @@ run_with_fakes() {
     AZ_BIN="$TMP/bin/az" \
     PYTHON_BIN="$TMP/bin/python3" \
     CHECK_STANDBY_BIN="$TMP/bin/check-standby-pool.sh" \
+    CHECK_NAP_BIN="$TMP/bin/check-nap-capacity.sh" \
     COLLECTOR_EXIT_RUN="${COLLECTOR_EXIT_RUN-}" \
     COLLECTOR_EXIT_CODE="${COLLECTOR_EXIT_CODE-}" \
     FAIL_CREATE_NAMESPACE="${FAIL_CREATE_NAMESPACE-}" \
@@ -186,6 +202,28 @@ grep -F 'mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8
 grep -F 'name: vn2-ondemand-run-1-pod-1' "$TMP/render/vn2-ondemand-run-1.yaml" >/dev/null
 grep -F 'name: vn2-ondemand-run-1-pod-5' "$TMP/render/vn2-ondemand-run-1.yaml" >/dev/null
 
+reset_behavior
+reset_logs
+run_with_fakes \
+  --scenario aks-nap \
+  --runs 1 \
+  --render-only \
+  --output-dir "$TMP/render"
+
+grep -F 'benchmark-path: aks-nap' "$TMP/render/aks-nap-run-1.yaml" >/dev/null
+grep -F 'key: benchmark-path' "$TMP/render/aks-nap-run-1.yaml" >/dev/null
+grep -F 'value: aks-nap' "$TMP/render/aks-nap-run-1.yaml" >/dev/null
+
+reset_behavior
+reset_logs
+run_with_fakes \
+  --scenario vn2-standby \
+  --runs 1 \
+  --render-only \
+  --output-dir "$TMP/render"
+
+grep -F 'benchmark-path: standby' "$TMP/render/vn2-standby-run-1.yaml" >/dev/null
+
 set +e
 output="$("$ROOT/scripts/run-benchmark.sh" \
   --scenario nope \
@@ -208,14 +246,14 @@ reset_logs
 FAIL_CREATE_NAMESPACE=1
 set +e
 run_with_fakes \
-  --scenario aks \
+  --scenario aks-nap \
   --runs 1 \
   --output-dir "$TMP/create-failure" >/dev/null 2>&1
 status=$?
 set -e
 
 [[ "$status" -ne 0 ]]
-test ! -e "$TMP/create-failure/raw/aks-run-1.json"
+test ! -e "$TMP/create-failure/raw/aks-nap-run-1.json"
 collector_lines_after=0
 if [[ -f "$TMP/logs/collector.log" ]]; then
   collector_lines_after="$(wc -l <"$TMP/logs/collector.log")"
@@ -229,21 +267,55 @@ fi
 reset_behavior
 reset_logs
 run_with_fakes \
-  --scenario vn2-standby-uncached \
+  --scenario vn2-standby \
   --runs 1 \
   --resource-group rg-test \
   --standby-pool pool-test \
   --output-dir "$TMP/standby-once"
 
-test -f "$TMP/standby-once/raw/vn2-standby-uncached-run-1.json"
+test -f "$TMP/standby-once/raw/vn2-standby-run-1.json"
 test "$(wc -l <"$TMP/logs/standby.log")" -eq 2
 grep -F -- '--expect-running 5' "$TMP/logs/standby.log" >/dev/null
 grep -F -- '--resource-group rg-test' "$TMP/logs/standby.log" >/dev/null
 grep -F -- '--name pool-test' "$TMP/logs/standby.log" >/dev/null
+test -s "$TMP/standby-once/diagnostics/vn2-standby-run-1/standby-precheck.json"
+test -s "$TMP/standby-once/diagnostics/vn2-standby-run-1/standby-postcheck.json"
 if find "$TMP/standby-once" -name '*.yaml' -print -quit | grep -q .; then
   echo 'expected one-run standby path to clean generated manifests' >&2
   exit 1
 fi
+
+reset_behavior
+reset_logs
+run_with_fakes \
+  --scenario aks-nap \
+  --runs 1 \
+  --output-dir "$TMP/nap-once"
+
+test -f "$TMP/nap-once/raw/aks-nap-run-1.json"
+test "$(wc -l <"$TMP/logs/nap.log")" -eq 2
+grep -F -- '--name workshop-nap --expect-nodes 0 --expect-nodeclaims 0' "$TMP/logs/nap.log" >/dev/null
+grep -F -- '--timeout-seconds 900' "$TMP/logs/collector.log" >/dev/null
+test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-precheck.json"
+test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-postcheck.json"
+test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-nodepool.yaml"
+test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-nodeclaims.yaml"
+test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-events.txt"
+grep -F 'get nodepool workshop-nap -o yaml' "$TMP/logs/kubectl.log" >/dev/null
+grep -F 'get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o yaml' "$TMP/logs/kubectl.log" >/dev/null
+grep -F 'get events -A --field-selector source=karpenter-events' "$TMP/logs/kubectl.log" >/dev/null
+
+reset_behavior
+reset_logs
+run_with_fakes \
+  --scenario vn2-ondemand \
+  --runs 1 \
+  --scenario-timeout-seconds 47 \
+  --output-dir "$TMP/timeout-override"
+
+grep -F -- '--timeout-seconds 47' "$TMP/logs/collector.log" >/dev/null
+test ! -s "$TMP/logs/nap.log"
+test ! -s "$TMP/logs/standby.log"
 
 reset_behavior
 reset_logs

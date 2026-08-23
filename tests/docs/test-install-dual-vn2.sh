@@ -5,6 +5,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 python3 - "$ROOT" <<'PY'
 import sys
+import re
+import shutil
+import stat
+import subprocess
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -129,5 +133,145 @@ for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", 
 
 if "다음 모듈에서 그대로 재사용" not in text:
     raise SystemExit("docs/03-install-dual-vn2.md must say STANDBY_POOL continues into the next module")
+
+step2_match = re.search(
+    r"### 2\) VN2 chart 저장소 추가와 pinned release 값 선언\n\n```bash\n(.*?)```",
+    text,
+    re.S,
+)
+if not step2_match:
+    raise SystemExit("docs/03-install-dual-vn2.md must contain the step 2 bash block")
+
+step2_block = step2_match.group(1)
+
+scratch = root / ".test-doc-install-dual-vn2"
+if scratch.exists():
+    shutil.rmtree(scratch)
+
+try:
+    (scratch / "results").mkdir(parents=True)
+    state_path = scratch / "results" / "workshop.env"
+    state_path.write_text(
+        "\n".join(
+            [
+                "export LOCATION='koreacentral'",
+                "export RG='rg-vn2-bench-10001'",
+                "export VNET='vnet-vn2-bench'",
+                "export AKS_SUBNET='snet-aks'",
+                "export CG_SUBNET='cg'",
+                "export NAT_NAME='nat-vn2-bench'",
+                "export NAT_PIP_NAME='pip-vn2-bench'",
+                "export AKS='aks-vn2-bench'",
+                "export VM_SIZE='Standard_D8s_v5'",
+                "export K8S_VERSION='1.34.12'",
+                "export VN2_CHART_VERSION='stale-chart'",
+                "export ONDEMAND_RELEASE='stale-ondemand'",
+                "export STANDBY_RELEASE='stale-standby'",
+                "export STANDBY_POOL='stale-pool'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    "umask 0022",
+                    'before="$(umask)"',
+                    "helm() { return 0; }",
+                    step2_block,
+                    'after="$(umask)"',
+                    'if [[ "$after" != "$before" ]]; then',
+                    '  printf "step 2 changed parent umask from %s to %s\\n" "$before" "$after" >&2',
+                    "  exit 1",
+                    "fi",
+                    'if [[ -n "${STANDBY_POOL:-}" ]]; then',
+                    '  printf "STANDBY_POOL leaked after step 2: %s\\n" "$STANDBY_POOL" >&2',
+                    "  exit 1",
+                    "fi",
+                ]
+            ),
+        ],
+        check=True,
+        cwd=scratch,
+        text=True,
+    )
+
+    state_text = state_path.read_text(encoding="utf-8")
+    for key in {
+        "LOCATION",
+        "RG",
+        "VNET",
+        "AKS_SUBNET",
+        "CG_SUBNET",
+        "NAT_NAME",
+        "NAT_PIP_NAME",
+        "AKS",
+        "VM_SIZE",
+        "K8S_VERSION",
+        "VN2_CHART_VERSION",
+        "ONDEMAND_RELEASE",
+        "STANDBY_RELEASE",
+    }:
+        if state_text.count(f"export {key}=") != 1:
+            raise SystemExit(f"Step 2 must leave exactly one export for {key}")
+
+    for stale in ("stale-chart", "stale-ondemand", "stale-standby", "stale-pool"):
+        if stale in state_text:
+            raise SystemExit(f"Step 2 must replace stale VN2 state; found {stale}")
+
+    if "export STANDBY_POOL=" in state_text:
+        raise SystemExit("Step 2 must not persist STANDBY_POOL before step 6 resolves it")
+
+    file_mode = stat.S_IMODE(state_path.stat().st_mode)
+    if file_mode != 0o600:
+        raise SystemExit(f"Step 2 must leave results/workshop.env mode 600, found {oct(file_mode)}")
+
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    "source results/workshop.env",
+                    ': "${RG:?missing RG}"',
+                    ': "${AKS:?missing AKS}"',
+                    ': "${CG_SUBNET:?missing CG_SUBNET}"',
+                    ': "${VN2_CHART_VERSION:?missing VN2_CHART_VERSION}"',
+                    ': "${ONDEMAND_RELEASE:?missing ONDEMAND_RELEASE}"',
+                    ': "${STANDBY_RELEASE:?missing STANDBY_RELEASE}"',
+                    '[[ "$LOCATION" == "koreacentral" ]]',
+                    '[[ "$RG" == "rg-vn2-bench-10001" ]]',
+                    '[[ "$VNET" == "vnet-vn2-bench" ]]',
+                    '[[ "$AKS_SUBNET" == "snet-aks" ]]',
+                    '[[ "$CG_SUBNET" == "cg" ]]',
+                    '[[ "$NAT_NAME" == "nat-vn2-bench" ]]',
+                    '[[ "$NAT_PIP_NAME" == "pip-vn2-bench" ]]',
+                    '[[ "$AKS" == "aks-vn2-bench" ]]',
+                    '[[ "$VM_SIZE" == "Standard_D8s_v5" ]]',
+                    '[[ "$K8S_VERSION" == "1.34.12" ]]',
+                    '[[ "$VN2_CHART_VERSION" == "1.3410.26081102" ]]',
+                    '[[ "$ONDEMAND_RELEASE" == "vn2-ondemand" ]]',
+                    '[[ "$STANDBY_RELEASE" == "vn2-standby" ]]',
+                    'if [[ -n "${STANDBY_POOL:-}" ]]; then',
+                    '  printf "fresh Cloud Shell resume should not preload STANDBY_POOL\\n" >&2',
+                    "  exit 1",
+                    "fi",
+                ]
+            ),
+        ],
+        check=True,
+        cwd=scratch,
+        text=True,
+    )
+finally:
+    if scratch.exists():
+        shutil.rmtree(scratch)
 
 PY

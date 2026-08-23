@@ -37,23 +37,27 @@ WORKSHOP_STATE="results/workshop.env"
 persist_workshop_state() {
   local STATE_TMP
   STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
-  umask 077
-  {
-    printf 'export LOCATION=%q\n' "$LOCATION"
-    printf 'export RG=%q\n' "$RG"
-    printf 'export VNET=%q\n' "$VNET"
-    printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
-    printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
-    printf 'export NAT_NAME=%q\n' "$NAT_NAME"
-    printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
-    printf 'export AKS=%q\n' "$AKS"
-    printf 'export VM_SIZE=%q\n' "$VM_SIZE"
-    printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
-    printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
-    printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
-    printf 'export STANDBY_RELEASE=%q\n' "$STANDBY_RELEASE"
-    printf 'export STANDBY_POOL=%q\n' "$STANDBY_POOL"
-  } >"$STATE_TMP"
+  (
+    umask 077
+    {
+      printf 'export LOCATION=%q\n' "$LOCATION"
+      printf 'export RG=%q\n' "$RG"
+      printf 'export VNET=%q\n' "$VNET"
+      printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
+      printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
+      printf 'export NAT_NAME=%q\n' "$NAT_NAME"
+      printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
+      printf 'export AKS=%q\n' "$AKS"
+      printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+      printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
+      printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
+      printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
+      printf 'export STANDBY_RELEASE=%q\n' "$STANDBY_RELEASE"
+      if [[ -n "${STANDBY_POOL:-}" ]]; then
+        printf 'export STANDBY_POOL=%q\n' "$STANDBY_POOL"
+      fi
+    } >"$STATE_TMP"
+  )
   chmod 600 "$STATE_TMP"
   mv "$STATE_TMP" "$WORKSHOP_STATE"
 }
@@ -85,6 +89,35 @@ source "$WORKSHOP_STATE"
 
 ```bash
 WORKSHOP_STATE="results/workshop.env"
+
+persist_workshop_state() {
+  local STATE_TMP
+  STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
+  (
+    umask 077
+    {
+      printf 'export LOCATION=%q\n' "$LOCATION"
+      printf 'export RG=%q\n' "$RG"
+      printf 'export VNET=%q\n' "$VNET"
+      printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
+      printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
+      printf 'export NAT_NAME=%q\n' "$NAT_NAME"
+      printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
+      printf 'export AKS=%q\n' "$AKS"
+      printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+      printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
+      printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
+      printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
+      printf 'export STANDBY_RELEASE=%q\n' "$STANDBY_RELEASE"
+      if [[ -n "${STANDBY_POOL:-}" ]]; then
+        printf 'export STANDBY_POOL=%q\n' "$STANDBY_POOL"
+      fi
+    } >"$STATE_TMP"
+  )
+  chmod 600 "$STATE_TMP"
+  mv "$STATE_TMP" "$WORKSHOP_STATE"
+}
+
 if [[ ! -f "$WORKSHOP_STATE" ]]; then
   printf 'Missing %s. Recover the exact workshop state before continuing.\n' "$WORKSHOP_STATE" >&2
   exit 1
@@ -98,9 +131,13 @@ helm repo update
 export VN2_CHART_VERSION="1.3410.26081102"
 export ONDEMAND_RELEASE="vn2-ondemand"
 export STANDBY_RELEASE="vn2-standby"
+unset STANDBY_POOL
+
+persist_workshop_state
+source "$WORKSHOP_STATE"
 ```
 
-이 워크숍은 chart version을 고정합니다. `latest` 나 임의의 새 chart로 바꾸면 Helm value 이름, webhook 동작, standby profile 허용 범위가 달라져 실습 결과를 비교할 수 없습니다.
+이 워크숍은 chart version을 고정합니다. `latest` 나 임의의 새 chart로 바꾸면 Helm value 이름, webhook 동작, standby profile 허용 범위가 달라져 실습 결과를 비교할 수 없습니다. Step 2가 끝나자마자 `results/workshop.env` 를 원자적으로 다시 써서 fresh Cloud Shell 이 step 6부터 재개되더라도 `VN2_CHART_VERSION`, `ONDEMAND_RELEASE`, `STANDBY_RELEASE` 는 이미 복구되고, 아직 존재하지 않는 `STANDBY_POOL` 은 stale 값 없이 비어 있는 상태로 남깁니다.
 
 ### 3) 두 release를 separate namespace 에 동시에 설치
 
@@ -220,23 +257,27 @@ WORKSHOP_STATE="results/workshop.env"
 persist_workshop_state() {
   local STATE_TMP
   STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
-  umask 077
-  {
-    printf 'export LOCATION=%q\n' "$LOCATION"
-    printf 'export RG=%q\n' "$RG"
-    printf 'export VNET=%q\n' "$VNET"
-    printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
-    printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
-    printf 'export NAT_NAME=%q\n' "$NAT_NAME"
-    printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
-    printf 'export AKS=%q\n' "$AKS"
-    printf 'export VM_SIZE=%q\n' "$VM_SIZE"
-    printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
-    printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
-    printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
-    printf 'export STANDBY_RELEASE=%q\n' "$STANDBY_RELEASE"
-    printf 'export STANDBY_POOL=%q\n' "$STANDBY_POOL"
-  } >"$STATE_TMP"
+  (
+    umask 077
+    {
+      printf 'export LOCATION=%q\n' "$LOCATION"
+      printf 'export RG=%q\n' "$RG"
+      printf 'export VNET=%q\n' "$VNET"
+      printf 'export AKS_SUBNET=%q\n' "$AKS_SUBNET"
+      printf 'export CG_SUBNET=%q\n' "$CG_SUBNET"
+      printf 'export NAT_NAME=%q\n' "$NAT_NAME"
+      printf 'export NAT_PIP_NAME=%q\n' "$NAT_PIP_NAME"
+      printf 'export AKS=%q\n' "$AKS"
+      printf 'export VM_SIZE=%q\n' "$VM_SIZE"
+      printf 'export K8S_VERSION=%q\n' "$K8S_VERSION"
+      printf 'export VN2_CHART_VERSION=%q\n' "$VN2_CHART_VERSION"
+      printf 'export ONDEMAND_RELEASE=%q\n' "$ONDEMAND_RELEASE"
+      printf 'export STANDBY_RELEASE=%q\n' "$STANDBY_RELEASE"
+      if [[ -n "${STANDBY_POOL:-}" ]]; then
+        printf 'export STANDBY_POOL=%q\n' "$STANDBY_POOL"
+      fi
+    } >"$STATE_TMP"
+  )
   chmod 600 "$STATE_TMP"
   mv "$STATE_TMP" "$WORKSHOP_STATE"
 }

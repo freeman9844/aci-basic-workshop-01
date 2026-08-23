@@ -4,7 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 python3 - "$ROOT" <<'PY'
+import os
 import re
+import shutil
+import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -174,5 +178,63 @@ if "- 이전: [Module 06](./06-analyze-results.md)" not in text07:
     raise SystemExit("docs/07-limitations-troubleshooting-cleanup.md must link back to Module 06")
 if "- 다음: [README](../README.md)" not in text07:
     raise SystemExit("docs/07-limitations-troubleshooting-cleanup.md must link forward to README")
+
+fallback_match = re.search(
+    r"만약 `results/workshop\.env` 자체가 없다면, 아래 fallback 은 후보 RG를 찾는 용도만 사용합니다\.\n\n```bash\n(.*?)```",
+    text07,
+    re.S,
+)
+if not fallback_match:
+    raise SystemExit("docs/07-limitations-troubleshooting-cleanup.md must contain the fallback recovery bash block")
+
+fallback_block = fallback_match.group(1)
+scratch = root / ".test-doc-analysis-cleanup"
+if scratch.exists():
+    shutil.rmtree(scratch)
+
+try:
+    workspace = scratch / "aci-vn2-performance-workshop"
+    workspace.mkdir(parents=True)
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    "umask 0022",
+                    'before="$(umask)"',
+                    "az() { return 0; }",
+                    fallback_block,
+                    'after="$(umask)"',
+                    'if [[ "$after" != "$before" ]]; then',
+                    '  printf "fallback changed parent umask from %s to %s\\n" "$before" "$after" >&2',
+                    "  exit 1",
+                    "fi",
+                    'if [[ "${RG:-}" != "rg-vn2-bench-12345" ]]; then',
+                    '  printf "fallback did not restore RG into the shell\\n" >&2',
+                    "  exit 1",
+                    "fi",
+                ]
+            ),
+        ],
+        check=True,
+        cwd=workspace,
+        env={**os.environ, "HOME": str(scratch)},
+        text=True,
+    )
+
+    state_path = workspace / "results" / "workshop.env"
+    if not state_path.exists():
+        raise SystemExit("Fallback recovery must recreate results/workshop.env")
+    state_text = state_path.read_text(encoding="utf-8")
+    if state_text.count("export RG=") != 1 or "rg-vn2-bench-12345" not in state_text:
+        raise SystemExit("Fallback recovery must rewrite results/workshop.env with the recovered exact RG only")
+    file_mode = stat.S_IMODE(state_path.stat().st_mode)
+    if file_mode != 0o600:
+        raise SystemExit(f"Fallback recovery must leave results/workshop.env mode 600, found {oct(file_mode)}")
+finally:
+    if scratch.exists():
+        shutil.rmtree(scratch)
 
 PY

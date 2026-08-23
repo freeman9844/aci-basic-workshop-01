@@ -83,12 +83,15 @@ source results/workshop.env
 ```bash
 cd ~/aci-vn2-performance-workshop
 WORKSHOP_STATE="results/workshop.env"
+mkdir -p results
 az group list --query "[?starts_with(name, 'rg-vn2-bench-')].[name, location]" --output table
 
 export RG="rg-vn2-bench-12345"
 STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
-umask 077
-printf 'export RG=%q\n' "$RG" >"$STATE_TMP"
+(
+  umask 077
+  printf 'export RG=%q\n' "$RG" >"$STATE_TMP"
+)
 chmod 600 "$STATE_TMP"
 mv "$STATE_TMP" "$WORKSHOP_STATE"
 source "$WORKSHOP_STATE"

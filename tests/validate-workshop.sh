@@ -22,6 +22,7 @@ run_step "Running cleanup tests" bash tests/scripts/test-cleanup.sh
 run_step "Running validator regression tests" bash tests/scripts/test-validate-workshop.sh
 run_step "Running NAP template manifest tests" bash tests/manifests/test-nap-workshop-template.sh
 run_step "Running overview documentation tests" bash tests/docs/test-overview.sh
+run_step "Running workshop style consistency tests" bash tests/docs/test-style-consistency.sh
 run_step "Running prerequisites/foundation documentation tests" bash tests/docs/test-prerequisites-foundation.sh
 run_step "Running dual VN2 installation documentation tests" bash tests/docs/test-install-dual-vn2.sh
 run_step "Running benchmark module documentation tests" bash tests/docs/test-benchmark-modules.sh

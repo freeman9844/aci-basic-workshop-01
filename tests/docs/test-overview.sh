@@ -131,7 +131,7 @@ banned_markers = ("TODO", "TBD", "FIXME", "작성 예정", "미정", "incomplete
 for module, path in module_files.items():
     text = path.read_text(encoding="utf-8")
     first_line = text.splitlines()[0] if text.splitlines() else ""
-    if not re.match(rf"^# Module {module}\. .*[가-힣]", first_line):
+    if not re.match(rf"^# {module}\. .*[가-힣]", first_line):
         raise SystemExit(f"{path.name} is missing a final Korean title line")
     for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 이전/다음"):
         if heading not in text:

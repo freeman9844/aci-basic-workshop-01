@@ -1,25 +1,35 @@
-# ACI VN2 성능 워크숍 개요
+# ACI VN2 성능 워크숍
 
-이 저장소는 **Korea Central** 기준으로 **AKS NAP**, **VN2 OnDemand**, **StandbyPool**, **Image Cache** 조합을 같은 조건으로 측정하는 180분 실습 안내서입니다. 네 시나리오에서 `5개 Pod × 3회`를 실행해 총 **12 raw JSON**과 all-success 기준 **60 Pod** 표본의 시작 지연 및 batch 완료 시간을 직접 수집하고 해석합니다.
+> Korea Central 기준으로 **AKS NAP**, **VN2 OnDemand**, **StandbyPool**, **Image Cache** 경로를 같은 계약으로 비교하고, `5개 Pod × 3회` 측정에서 **12 raw JSON**과 all-success 기준 **60 Pod** evidence를 해석하는 180분 핸즈온 워크숍입니다.
 
+---
 > [!WARNING]
 > 이 워크숍은 **전용 교육용 Azure 구독의 Owner 권한**을 전제로 합니다. 기존 production 구독이나 공유 AKS 클러스터에서 진행하지 마세요.
 
 > [!WARNING]
 > **비용**이 즉시 발생합니다. 실습 중에는 두 VN2 infrastructure release와 cluster system Pod를 호스팅하는 `Standard_D16s_v5` fixed system node, NAP benchmark 때 0→1로 생성되는 `Standard_D4s_v5` AKS VM, `cg` subnet에 연결한 **NAT Gateway** 와 **public IP**, **ACI OnDemand** container group, 그리고 StandbyPool의 **5개의 warm standby** container groups가 함께 사용됩니다. Module 07의 정리 절차를 생략하면 실습 종료 후에도 과금이 계속됩니다.
 
+---
+
 ## 빠른 시작
 
-```bash
-git clone <repository-url> ~/aci-vn2-performance-workshop
-cd ~/aci-vn2-performance-workshop
-```
+1. Azure Portal Cloud Shell Bash 또는 동등한 Bash 환경을 엽니다.
+2. 워크숍 저장소를 고정 경로에 clone 합니다.
+
+   ```bash
+   git clone <repository-url> ~/aci-vn2-performance-workshop
+   cd ~/aci-vn2-performance-workshop
+   ```
+
+3. [01. 사전 검사와 참가 조건 확인](docs/01-prerequisites.md)부터 [07. 제약, 트러블슈팅, 정리](docs/07-limitations-troubleshooting-cleanup.md)까지 순서대로 진행합니다.
 
 실습은 Azure Portal Cloud Shell Bash를 기준으로 작성되었습니다. 로컬 터미널을 사용할 경우 `az`, `kubectl`, `helm`, `jq`, `python3`, `git` 버전이 Module 01 기준을 만족해야 합니다.
 
-## Persisted workshop state
+---
 
-`results/workshop.env is the authoritative workshop state`. Module 02가 이 파일을 원자적으로 만들고, Module 03이 standby 관련 키를 같은 파일에 다시 기록합니다. 이후 participant 모듈은 가능하면 먼저 이 파일을 읽습니다.
+## 세션 복구 가이드
+
+`results/workshop.env is the authoritative workshop state`. Module 02가 이 파일을 원자적으로 만들고, Module 03이 standby 관련 키를 같은 파일에 다시 기록합니다. 이후 participant 모듈은 fresh Cloud Shell recovery가 필요할 때 가장 먼저 이 파일을 읽습니다.
 
 fresh Cloud Shell recovery 가 필요하면 저장소 루트에서 아래처럼 다시 불러오십시오.
 
@@ -32,6 +42,20 @@ cd ~/aci-vn2-performance-workshop
 ```
 
 `results/workshop.env` 가 없다면 Module 07의 fresh-session recovery 절차로 정확한 workshop RG를 다시 확인한 뒤 파일을 복구하고 진행합니다.
+
+---
+
+## 학습 목표
+
+이 워크숍을 완료하면 다음을 할 수 있습니다.
+
+1. AKS NAP, VN2 OnDemand, StandbyPool, Image Cache 네 경로의 lifecycle 차이를 설명할 수 있습니다.
+2. `results/environment.json` 과 `results/workshop.env` 를 기준으로 workshop state를 복구할 수 있습니다.
+3. `aks-nap`, `vn2-ondemand`, `vn2-standby`, `vn2-standby-cached`를 같은 계약으로 측정할 수 있습니다.
+4. `results/summary.json`, `results/summary.csv`, `results/summary.md` 와 raw evidence를 함께 해석할 수 있습니다.
+5. cleanup 완료 전까지 `Standby Pool running count is 5`, raw JSON 개수, residual resource IDs 같은 운영 체크포인트를 확인할 수 있습니다.
+
+---
 
 ## 아키텍처
 
@@ -62,6 +86,8 @@ flowchart TB
   scripts --> raw[results/raw<br>JSON, CSV, Pod events]
   raw --> report[results/summary.md<br>median, p95, min/max, speed-up]
 ```
+
+---
 
 ## 비교 시나리오
 
@@ -138,6 +164,8 @@ StandbyPool이 compute 준비 시간을 줄여도 새 capacity가 benchmark imag
 
 구현과 측정 절차는 [Module 03: 이중 VN2 설치와 standby pool 준비](docs/03-install-dual-vn2.md), [Module 05: StandbyPool과 Image Cache 측정](docs/05-standby-cache-benchmark.md), [Module 06: 결과 분석과 해석](docs/06-analyze-results.md)에서 이어집니다. 제품 개념은 Microsoft Learn의 [Virtual nodes on Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-virtual-nodes)와 [Standby pools for Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-standby-pool-overview)를 참고하세요.
 
+---
+
 ## Korea Central live rehearsal reference
 
 2026-08-23 Korea Central에서 각 시나리오를 5 Pods × 3회 실행한 측정 reference입니다. Pod와 Batch ratio는 모두 **VN2 OnDemand median / candidate median**이며, 1보다 크면 candidate가 더 빨랐음을 뜻합니다.
@@ -151,17 +179,20 @@ StandbyPool이 compute 준비 시간을 줄여도 새 capacity가 benchmark imag
 
 세부 환경, p95, NAP 0→1→0 lifecycle, StandbyPool `healthy`/`running=5`, cache 5→0→5 recycle와 실패/timeout/fallback evidence는 [Korea Central 2026-08-23 live rehearsal reference](docs/reference/korea-central-2026-08-23.md)와 [reference JSON](docs/reference/korea-central-2026-08-23.json)에 있습니다. 이 결과는 특정 rehearsal의 reference일 뿐 SLA나 성능 보장이 아닙니다.
 
-## 사전 요구 사항
+---
 
-- Azure Portal Cloud Shell Bash 또는 동등한 Bash 환경
-- 전용 교육용 구독과 **Owner** 권한
-- 대상 지역: **Korea Central**
-- 워크숍용 리소스를 새로 만들 수 있는 quota 여유
-- `results/` 디렉터리에 raw evidence를 보관할 수 있는 저장소 쓰기 권한
+## 사전 요구사항
 
-Module 01에서 provider 등록, quota, VM SKU, Helm/Kubernetes 도구 버전을 다시 확인합니다.
+| 항목 | 설명 |
+|------|------|
+| Azure Portal Cloud Shell Bash 또는 동등한 Bash 환경 | 실습 명령은 Cloud Shell Bash 기준으로 작성되며, 로컬 환경을 사용하더라도 동일한 Bash 동작을 보장해야 합니다. |
+| 전용 교육용 구독과 **Owner** 권한 | provider 등록, role assignment, cleanup, quota 확인을 한 번에 처리하려면 Owner 권한이 필요합니다. |
+| 대상 지역 | **Korea Central** 를 기준으로 측정하며, 문서의 live reference와 비교할 때도 같은 지역을 사용합니다. |
+| quota headroom | `Standard_D16s_v5`, `Standard_D4s_v5`, ACI StandardCores, container groups, standby refill을 동시에 감당할 여유가 있어야 합니다. |
+| 저장소 쓰기 권한 | `results/` 아래에 raw evidence와 summary 산출물을 저장하고 유지할 수 있어야 합니다. |
+| 기본 도구 | Module 01에서 Azure CLI, `kubectl`, `helm`, `jq`, `python3`, `git` 상태를 다시 확인합니다. |
 
-fixed system node 크기는 `Standard_D16s_v5`이고 두 VN2 infrastructure release와 cluster system Pod만 호스팅합니다. NAP benchmark NodePool은 `Standard_D4s_v5`를 고정하고 0개 node에서 시작합니다.
+---
 
 ## 모듈 구성
 
@@ -177,6 +208,8 @@ fixed system node 크기는 `Standard_D16s_v5`이고 두 VN2 infrastructure rele
 | Module 07 | 제약, 트러블슈팅, 정리 | 10분 | 오류 분류, 잔여 리소스 확인, 전체 cleanup |
 |  | **합계** | **180분** |  |
 
+---
+
 ## 문서 흐름
 
 1. [Module 01](docs/01-prerequisites.md) — 사전 검사와 참가 조건 확인
@@ -187,7 +220,73 @@ fixed system node 크기는 `Standard_D16s_v5`이고 두 VN2 infrastructure rele
 6. [Module 06](docs/06-analyze-results.md) — 결과 분석
 7. [Module 07](docs/07-limitations-troubleshooting-cleanup.md) — 제약, 트러블슈팅, 정리
 
-## 완료 체크리스트
+---
+
+## 시간표
+
+| 구간 | 내용 | 예상 시간 |
+|------|------|-----------|
+| 시작 | 개요 및 실습 범위 확인 | 5분 |
+| 1부 | 사전 검사 + AKS NAP 기반 환경 준비 | 55분 |
+| 2부 | 이중 VN2 설치 + AKS NAP/VN2 OnDemand 측정 | 65분 |
+| 3부 | StandbyPool/Image Cache 측정 + 결과 분석 | 45분 |
+| 마무리 | 제약 정리 + cleanup 검증 | 10분 |
+| 합계 | 코어 워크숍 | 180분 |
+
+> 리소스 그룹 삭제 요청은 180분 일정에 포함되지만, AKS 관련 비동기 정리와 Azure 백엔드 삭제 완료는 워크숍 종료 후까지 이어질 수 있습니다.
+
+---
+
+## 비용 개요
+
+> 실습이 끝나면 반드시 [Module 07](docs/07-limitations-troubleshooting-cleanup.md)의 cleanup 절차를 수행하세요. 정확한 통화 금액은 구독, 리전, 실행 시간, 로그 수집량에 따라 달라지므로 이 문서에서는 고정 비용을 약속하지 않습니다.
+
+| 리소스 | 과금 기준 | 실습 관점 메모 |
+|--------|-----------|----------------|
+| AKS fixed system node | `Standard_D16s_v5` 실행 시간 | 두 VN2 infrastructure release와 cluster system Pod를 계속 호스팅합니다. |
+| AKS NAP benchmark node | `Standard_D4s_v5` 실행 시간 | `workshop-nap`이 0→1로 확장될 때만 비용이 발생합니다. |
+| StandbyPool / ACI compute | warm standby + 실행 중 container group | `running=5` standby capacity와 benchmark burst가 함께 반영됩니다. |
+| NAT Gateway + public IP | 시간 + 데이터 처리량 | `cg` subnet outbound 경로를 유지하는 동안 계속 과금됩니다. |
+| Log storage in `results/` and Azure artifacts | raw evidence, summary, diagnostics 보관 | cleanup 전까지 evidence와 Azure 리소스가 함께 남습니다. |
+
+---
+
+## 태그 범례
+
+| 태그 | 의미 |
+|------|------|
+| 🟢 **실행** | 참가자가 직접 입력하거나 수행해야 하는 단계 |
+| 👁️ **설명** | 개념 설명 또는 읽기 전용 안내 |
+| 📋 **예상 출력** | 실행 결과와 비교할 기준 출력 |
+| ⚠️ **주의** | 보안, 비용, 제약 사항 안내 |
+
+---
+
+## 트러블슈팅 색인
+
+| 증상 | 바로 갈 모듈 |
+|------|----------------|
+| `Microsoft.StandbyPool` provider, feature/role assignment, quota preflight가 실패함 | [docs/01-prerequisites.md#문제-해결](docs/01-prerequisites.md#문제-해결) |
+| custom VNet, identity, kubelet, `workshop-nap` NodePool 준비가 실패함 | [docs/02-azure-foundation.md#문제-해결](docs/02-azure-foundation.md#문제-해결) |
+| Helm install, webhook ownership, standby pool discovery가 꼬임 | [docs/03-install-dual-vn2.md#문제-해결](docs/03-install-dual-vn2.md#문제-해결) |
+| `aks-nap` 또는 `vn2-ondemand` raw evidence가 부족하거나 zero-state가 깨짐 | [docs/04-baseline-ondemand-benchmark.md#문제-해결](docs/04-baseline-ondemand-benchmark.md#문제-해결) |
+| standby refill, Image Cache recycle, cached retry 해석이 꼬임 | [docs/05-standby-cache-benchmark.md#문제-해결](docs/05-standby-cache-benchmark.md#문제-해결) |
+| summary metric, ratio, per-run evidence 해석이 애매함 | [docs/06-analyze-results.md#문제-해결](docs/06-analyze-results.md#문제-해결) |
+| cleanup, recovery, residual resource IDs 판단이 어렵다 | [docs/07-limitations-troubleshooting-cleanup.md#문제-해결](docs/07-limitations-troubleshooting-cleanup.md#문제-해결) |
+
+---
+
+## 참고 자료
+
+- [Virtual nodes on Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-virtual-nodes)
+- [Standby pools for Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-standby-pool-overview)
+- [Korea Central 2026-08-23 live rehearsal reference](docs/reference/korea-central-2026-08-23.md)
+- [Korea Central 2026-08-23 reference JSON](docs/reference/korea-central-2026-08-23.json)
+- [AKS automatic node provisioning overview](https://learn.microsoft.com/azure/aks/node-autoprovision)
+
+---
+
+## 완료 기준
 
 - [ ] Module 01에서 Owner 권한, provider 등록, 도구 버전, quota를 확인했다.
 - [ ] Module 02에서 AKS와 `cg` subnet, NAT Gateway, public IP를 준비했다.
@@ -198,6 +297,8 @@ fixed system node 크기는 `Standard_D16s_v5`이고 두 VN2 infrastructure rele
 - [ ] Module 06에서 `results/summary.json`, `results/summary.csv`, `results/summary.md`를 생성했다.
 - [ ] 실패, timeout, fallback evidence를 삭제하지 않고 그대로 보관했다.
 - [ ] Module 07까지 완료해 잔여 리소스가 없는지 확인했다.
+
+---
 
 ## Operator-only smoke test checklist
 
@@ -210,6 +311,8 @@ fixed system node 크기는 `Standard_D16s_v5`이고 두 VN2 infrastructure rele
 - [ ] `results/summary.json, results/summary.csv, and results/summary.md` 가 모두 생성되었다.
 - [ ] No timeout/failure samples are hidden; `failed_count`, `timeout_count`, `non_ready_pods` 를 그대로 검토했다.
 - [ ] `./scripts/cleanup.sh --resource-group "$RG" --yes` 뒤 `az group exists --name "$RG"` 결과가 `false` 다.
+
+---
 
 ## Mandatory cleanup
 

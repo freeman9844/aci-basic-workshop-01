@@ -1,8 +1,18 @@
-# Module 02. AKS NAP 기반 환경 준비
+# 02. AKS NAP 기반 환경 준비
+
+> Korea Central에 custom VNet, NAT Gateway, user-assigned managed identity, NAP Auto AKS, `workshop-nap` NodePool을 만들고 `results/workshop.env`를 기준 상태로 저장합니다.
+
 
 ## 목표
 
-Korea Central에 고정 주소 체계의 custom VNet, delegated `cg` subnet, Standard public IP와 NAT Gateway를 만들고, Azure CNI, Standard Load Balancer, user-assigned managed identity, NAP Auto 구성을 사용하는 AKS를 준비합니다. `Standard_D16s_v5` fixed system node는 cluster system Pod와 두 VN2 infrastructure release 전용으로 유지하고, benchmark는 0개 node에서 시작하는 `workshop-nap` NAP benchmark NodePool만 사용합니다.
+이 모듈을 완료하면 다음을 할 수 있습니다.
+
+- 고정 주소 체계의 custom VNet, delegated `cg` subnet, Standard public IP, NAT Gateway를 같은 순서로 준비할 수 있습니다.
+- `AKS_IDENTITY` 와 VNet 범위 `Network Contributor` 권한을 연결해 NAP Auto용 AKS를 만들 수 있습니다.
+- Azure CNI, Standard Load Balancer, user-assigned managed identity, NAP Auto 구성을 사용하는 AKS를 같은 계약으로 준비할 수 있습니다.
+- `workshop-nap` NAP benchmark NodePool과 fixed system node 역할을 분리해 유지할 수 있습니다.
+- `Standard_D16s_v5` fixed system node와 `Standard_D4s_v5` `workshop-nap` NodePool 0-state를 동시에 준비할 수 있습니다.
+- `results/workshop.env` 를 mode `600`으로 원자적으로 저장해 다음 모듈의 기준 상태로 재사용할 수 있습니다.
 
 ## 예상 소요 시간
 
@@ -15,6 +25,17 @@ Korea Central에 고정 주소 체계의 custom VNet, delegated `cg` subnet, Sta
 - 사용할 subscription ID와 Azure location이 확정되었다.
 - 아직 workshop 리소스 그룹과 `results/workshop.env` 가 없다.
 
+
+## 태그 범례
+
+| 태그 | 의미 |
+|------|------|
+| 🟢 **실행** | 참가자가 직접 입력하거나 수행해야 하는 단계 |
+| 👁️ **설명** | 왜 이 단계를 하는지 이해하기 위한 읽기 전용 안내 |
+| 📋 **예상 출력** | 실행 결과와 비교할 기준 출력 |
+| ⚠️ **주의** | 비용, 순서, 안전성, 계약 조건 안내 |
+
+
 ## 진행 순서
 
 1. 고정 이름, 주소 범위, system/NAP VM 크기와 지원되는 Kubernetes `1.34.x` 버전을 선언합니다.
@@ -25,9 +46,23 @@ Korea Central에 고정 주소 체계의 custom VNet, delegated `cg` subnet, Sta
 6. NodePool Ready와 NAP node/NodeClaim 0개를 확인합니다.
 7. 성공한 상태를 mode `600`의 `results/workshop.env`에 원자적으로 저장합니다.
 
+
+👁️ **설명**
+
+아래 단계는 설명 → 실행 → 예상 출력 → 주의 순서로 읽습니다. 코드 블록은 순서를 바꾸지 말고, fail-fast로 멈추면 같은 단계에서 원인을 먼저 정리합니다.
+
+⚠️ **주의**
+
+선행 조건을 확인하지 못했거나 측정 상태가 불분명하면 다음 단계로 넘어가지 않습니다.
+
+
 ### 1) 고정 변수와 지원되는 Kubernetes 1.34 패치 선택
 
+👁️ **설명**
+
 Module 01의 `results/environment.json` 이 이미 `Standard_D16s_v5` 와 `koreacentral` 을 검증했더라도 AKS 생성 직전에 실제 지원 버전을 다시 조회합니다.
+
+🟢 **실행**
 
 ```bash
 cd ~/aci-vn2-performance-workshop
@@ -93,6 +128,10 @@ printf 'Using Kubernetes version %s, system VM %s, NAP VM %s\n' \
   "$K8S_VERSION" "$VM_SIZE" "$NAP_VM_SIZE"
 ```
 
+📋 **예상 출력**
+
+- `Using Kubernetes version ...` 한 줄이 보이면 state file과 고정 VM 크기가 함께 복구된 것입니다.
+
 `NAP_VM_SIZE`는 manifest의 `Standard_D4s_v5`와 일치해야 합니다. 임의의 SKU로 바꾸면 이 워크숍이 측정하려는 고정된 0→1 VM provisioning 경로가 달라집니다. `results/workshop.env is the authoritative workshop state` 이므로 새 Cloud Shell에서는 항상 `source "$WORKSHOP_STATE"`로 복구합니다.
 
 ### 2) custom VNet, delegated subnet, NAT Gateway 만들기
@@ -138,6 +177,8 @@ source "$WORKSHOP_STATE"
     --nat-gateway "$NAT_NAME"
 )
 ```
+
+⚠️ **주의**
 
 AKS subnet과 ACI `cg` subnet은 분리합니다. `cg`만 `Microsoft.ContainerInstance/containerGroups`에 위임하고 NAT Gateway를 연결합니다.
 

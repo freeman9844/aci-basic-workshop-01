@@ -1,8 +1,16 @@
-# Module 07. 제약, 트러블슈팅, 정리
+# 07. 제약, 트러블슈팅, 정리
+
+> 지원 범위, 대표 failure evidence, fresh-session recovery, billing-critical cleanup 기준을 한곳에서 마무리합니다.
+
 
 ## 목표
 
-지원 범위 밖의 한계를 명확히 구분하고, 실제 diagnostics/CLI evidence 로 대표 증상을 해석한 뒤, `scripts/cleanup.sh --resource-group "$RG" --yes` 로 실습 리소스를 안전하게 제거합니다.
+이 모듈을 완료하면 다음을 할 수 있습니다.
+
+- 지원하지 않는 범위와 해석 제한을 실제 troubleshooting evidence와 연결해 설명할 수 있습니다.
+- `results/workshop.env` 기반 recovery 와 missing state file fallback 을 안전하게 구분할 수 있습니다.
+- `scripts/cleanup.sh --resource-group "$RG" --yes` 와 residual resource IDs evidence를 사용해 cleanup를 완료할 수 있습니다.
+- billing-critical RG deletion 경고를 숨기지 않고 그대로 보존할 수 있습니다.
 
 ## 예상 소요 시간
 
@@ -14,7 +22,55 @@
 - 가능하면 `results/workshop.env` 가 남아 있고, fresh Cloud Shell 에서도 다시 source 할 수 있다.
 - `RG` 와 `STANDBY_POOL` 은 살아 있는 쉘 메모리보다 `results/workshop.env` 에 저장된 값이 기준이다.
 
+
+## 태그 범례
+
+| 태그 | 의미 |
+|------|------|
+| 🟢 **실행** | 참가자가 직접 입력하거나 수행해야 하는 단계 |
+| 👁️ **설명** | 왜 이 단계를 하는지 이해하기 위한 읽기 전용 안내 |
+| 📋 **예상 출력** | 실행 결과와 비교할 기준 출력 |
+| ⚠️ **주의** | 비용, 순서, 안전성, 계약 조건 안내 |
+
+
 ## 진행 순서
+
+1. hard limitations 와 범위 제외를 먼저 확인합니다.
+2. exact RG를 기준으로 cleanup를 실행하고, `az group exists` 와 residual resource IDs evidence를 확인합니다.
+3. fresh Cloud Shell recovery 와 missing state file fallback 절차를 마지막까지 정리합니다.
+
+## 0. 세션 재연결 시 상태 복구 (선택)
+
+<details>
+<summary>fresh Cloud Shell에서 cleanup 대상 RG를 다시 확인하는 명령 보기</summary>
+
+👁️ **설명**
+
+cleanup 단계는 exact RG 하나를 정확히 다시 잡는 것이 핵심입니다. 새 Cloud Shell에서는 먼저 state file을 source하고, 값이 없다면 이 문서의 fallback 절차로만 복구합니다.
+
+🟢 **실행**
+
+```bash
+cd ~/aci-vn2-performance-workshop
+source results/workshop.env
+printf 'RG=%s\n' "$RG"
+```
+
+📋 **예상 출력**
+
+- cleanup 대상 RG 하나만 다시 확인됩니다.
+- 값이 비어 있으면 wildcard를 쓰지 말고 3단계 fallback 절차로 exact RG를 먼저 복구합니다.
+
+</details>
+
+👁️ **설명**
+
+아래 단계는 설명 → 실행 → 예상 출력 → 주의 순서로 읽습니다. 코드 블록은 순서를 바꾸지 말고, fail-fast로 멈추면 같은 단계에서 원인을 먼저 정리합니다.
+
+⚠️ **주의**
+
+선행 조건을 확인하지 못했거나 측정 상태가 불분명하면 다음 단계로 넘어가지 않습니다.
+
 
 ### 1) hard limitations 와 범위 제외를 먼저 확인
 
@@ -36,6 +92,8 @@
 
 ### 2) 안전한 cleanup 명령 실행
 
+🟢 **실행**
+
 반드시 저장소 루트에서 아래 두 줄을 그대로 실행합니다.
 
 ```bash
@@ -51,6 +109,8 @@ fi
 scripts/cleanup.sh --resource-group "$RG" --yes
 az group exists --name "$RG"
 ```
+
+📋 **예상 출력**
 
 정상 종료 뒤 기대하는 마지막 출력은 아래와 같습니다.
 
@@ -109,7 +169,9 @@ mv "$STATE_TMP" "$WORKSHOP_STATE"
 source "$WORKSHOP_STATE"
 ```
 
-이 표는 broad match 를 보여 줄 뿐이며, 자동 삭제 대상이 아닙니다. Never pass a wildcard or broad match into cleanup. 참가자는 Portal, `az group show --name "$RG"`, 또는 기존 evidence 를 대조해 exact RG 하나를 직접 확정해야 합니다. Save the recovered exact RG back into results/workshop.env before deleting anything.
+이 표는 broad match 를 보여 줄 뿐이며, 자동 삭제 대상이 아닙니다. ⚠️ **주의**
+
+Never pass a wildcard or broad match into cleanup. 참가자는 Portal, `az group show --name "$RG"`, 또는 기존 evidence 를 대조해 exact RG 하나를 직접 확정해야 합니다. Save the recovered exact RG back into results/workshop.env before deleting anything.
 
 `STANDBY_POOL` 이 꼭 필요하면 exact RG 를 확인한 다음 그 RG 안에서 다시 조회하십시오. 그러나 cleanup 자체는 broad match 를 받아서는 안 되며, `rg-vn2-bench-*` 같은 패턴을 `scripts/cleanup.sh` 에 직접 넘기면 안 됩니다.
 

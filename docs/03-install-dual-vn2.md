@@ -1,8 +1,20 @@
-# Module 03. 이중 VN2 설치와 standby pool 준비
+# 03. 이중 VN2 설치와 StandbyPool 준비
+
+> 동일 AKS 클러스터에 `vn2-ondemand`와 `vn2-standby`를 함께 설치하고, `benchmark-path`와 `STANDBY_POOL` 상태를 다음 모듈까지 그대로 이어갑니다.
+
 
 ## 목표
 
-하나의 AKS 클러스터에 `vn2-ondemand` 와 `vn2-standby` 를 **동시에** 설치해 세 가지 node path(`aks-nap`, `ondemand`, `standby`)를 고정합니다. `Standard_D16s_v5` fixed system node는 두 VN2 infrastructure release를 호스팅하며 benchmark routing에는 사용하지 않습니다. NAP benchmark NodePool은 0개 node에서 시작하고, 네 가지 benchmark scenario 중 두 standby scenario는 같은 `benchmark-path=standby` 경로를 쓰되 image cache 유무와 pool 상태만 다릅니다.
+이 모듈을 완료하면 다음을 할 수 있습니다.
+
+- `results/workshop.env` 와 AKS context를 같은 workshop state로 복구할 수 있습니다.
+- chart version `1.3410.26081102` 를 고정한 채 `vn2-ondemand` 와 `vn2-standby` 를 동시에 설치할 수 있습니다.
+- 하나의 AKS 클러스터에서 세 가지 node path(`aks-nap`, `ondemand`, `standby`)를 분리해 유지할 수 있습니다.
+- image cache 유무까지 포함한 네 가지 benchmark scenario를 같은 standby path 위에서 구분해 설명할 수 있습니다.
+- `STANDBY_POOL` 이름과 pool 상태를 다음 모듈까지 그대로 이어 갈 수 있습니다.
+- fixed system node와 분리된 NAP benchmark NodePool은 0개 node에서 시작하는 계약을 유지할 수 있습니다.
+- `benchmark-path=ondemand`, `benchmark-path=standby`, `workshop-nap` 0-state를 같은 클러스터에서 분리해 확인할 수 있습니다.
+- `STANDBY_POOL` 과 release 정보를 원자적으로 다시 저장해 Module 04 이후에도 재사용할 수 있습니다.
 
 ## 예상 소요 시간
 
@@ -18,6 +30,17 @@
 - fixed system node에는 benchmark routing label이 없다.
 - kubelet identity Contributor 권한과 Standby Pool Resource Provider RBAC가 이미 준비되었다.
 
+
+## 태그 범례
+
+| 태그 | 의미 |
+|------|------|
+| 🟢 **실행** | 참가자가 직접 입력하거나 수행해야 하는 단계 |
+| 👁️ **설명** | 왜 이 단계를 하는지 이해하기 위한 읽기 전용 안내 |
+| 📋 **예상 출력** | 실행 결과와 비교할 기준 출력 |
+| ⚠️ **주의** | 비용, 순서, 안전성, 계약 조건 안내 |
+
+
 ## 진행 순서
 
 1. Module 02에서 만든 state file을 먼저 source 하고, `$RG`, `cg` subnet, AKS context와 NAP zero-capacity 상태를 그대로 재사용하는지 확인합니다.
@@ -27,6 +50,40 @@
 5. `benchmark-path=ondemand` 와 `benchmark-path=standby` virtual node 가 모두 Ready 인지 확인합니다.
 6. standby pool을 정확히 하나만 찾고 `STANDBY_POOL` 로 export 한 뒤, healthy/running 5 상태를 기다립니다.
 7. 마지막에는 Module 02 키를 보존한 채 `results/workshop.env` 를 원자적으로 다시 써서 Module 04 이후에도 같은 상태를 복구할 수 있게 합니다.
+
+
+## 0. 세션 재연결 시 상태 복구 (선택)
+
+<details>
+<summary>fresh Cloud Shell에서 workshop state와 kubeconfig 복구 명령 보기</summary>
+
+👁️ **설명**
+
+같은 shell을 계속 사용 중이면 이 절은 건너뜁니다. 새 Cloud Shell이라면 `results/workshop.env`와 kubeconfig를 먼저 복구한 뒤 1단계부터 다시 확인합니다.
+
+🟢 **실행**
+
+```bash
+cd ~/aci-vn2-performance-workshop
+source results/workshop.env
+az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
+```
+
+📋 **예상 출력**
+
+- `RG`, `AKS`, `CG_SUBNET`, `NAP_NODEPOOL` 같은 workshop state를 그대로 다시 사용할 수 있습니다.
+- kubeconfig가 현재 실습용 AKS를 다시 가리키면 1단계부터 이어서 진행할 수 있습니다.
+
+</details>
+
+👁️ **설명**
+
+아래 단계는 설명 → 실행 → 예상 출력 → 주의 순서로 읽습니다. 코드 블록은 순서를 바꾸지 말고, fail-fast로 멈추면 같은 단계에서 원인을 먼저 정리합니다.
+
+⚠️ **주의**
+
+선행 조건을 확인하지 못했거나 측정 상태가 불분명하면 다음 단계로 넘어가지 않습니다.
+
 
 ### 1) Module 02 state file 과 AKS context 연속성 확인
 
@@ -200,6 +257,8 @@ source "$WORKSHOP_STATE"
 )
 ```
 
+⚠️ **주의**
+
 Standby 쪽은 `standbyPool.standbyPoolsCpu=1`, `standbyPool.standbyPoolsMemory=2`, `standbyPool.maxReadyCapacity=5` 를 그대로 유지합니다. 이 `1 vCPU / 2 GiB` 프로필이 현재 구독이나 지역 API에서 거부되면 더 큰 값을 자동으로 고르지 말고, 실패 원인과 허용 가능한 최소 프로필을 먼저 확인해야 합니다.
 
 ### 4) 왜 첫 번째 release만 cluster-scoped admission controller 를 소유해야 하는가
@@ -258,6 +317,8 @@ source "$WORKSHOP_STATE"
 ```
 
 `kubectl wait` 는 label 이 아직 안 생긴 짧은 race 구간에서는 바로 끝날 수 있으므로, 위처럼 먼저 label 등장을 최대 10분 동안 bounded polling 한 뒤 Ready wait 로 넘어갑니다. 이 단계가 의미하는 capacity 기준은 16-vCPU/64-GiB fixed system node 한 대가 두 VN2 infrastructure release와 cluster system Pod를 안정적으로 호스팅해야 한다는 것입니다. Benchmark Pod는 이 node에 배치하지 않습니다.
+
+📋 **예상 출력**
 
 예상 출력은 환경마다 이름이 달라도 다음 구조를 포함해야 합니다.
 
@@ -357,6 +418,8 @@ az standby-container-group-pool status \
   --version latest \
   --output json
 ```
+
+📋 **예상 출력**
 
 성공 시 `check-standby-pool.sh` 는 다음과 비슷한 JSON을 출력합니다.
 

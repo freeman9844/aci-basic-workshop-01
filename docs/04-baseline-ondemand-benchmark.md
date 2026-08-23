@@ -1,8 +1,18 @@
-# Module 04. AKS NAP와 VN2 OnDemand 측정 실행
+# 04. AKS NAP와 VN2 OnDemand 측정 실행
+
+> 같은 benchmark template로 `aks-nap`과 `vn2-ondemand`를 5 Pods × 3회 실행하고, 0→1→0 NAP evidence와 raw diagnostics를 함께 수집합니다.
+
 
 ## 목표
 
-같은 benchmark Pod template로 `AKS NAP`와 `VN2 OnDemand`를 각각 5 Pods × 3회 실행합니다. `aks-nap`은 각 run의 NAP node/NodeClaim 0 → 1 → 0 lifecycle을 증명하고, `vn2-ondemand`는 net-new ACI 실행 경로를 측정합니다. 실패나 timeout이 발생해도 run별 JSON과 diagnostics를 보존합니다.
+이 모듈을 완료하면 다음을 할 수 있습니다.
+
+- `results/workshop.env` 와 helper를 같은 shell에서 복구해 benchmark를 다시 시작할 수 있습니다.
+- `workshop-nap` NodePool의 node/NodeClaim 0-state를 확인한 뒤 `aks-nap`을 안전하게 3회 실행할 수 있습니다.
+- `aks-nap` run마다 NAP node/NodeClaim 0 → 1 → 0 evidence를 raw JSON과 diagnostics로 확인할 수 있습니다.
+- `aks-nap` 과 `vn2-ondemand` 의 run별 JSON, diagnostics, archive/retry 흐름을 분리해 관리할 수 있습니다.
+- `vn2-ondemand` 3회 실행에서 raw JSON, diagnostics, ACI inventory evidence를 보존할 수 있습니다.
+- 실패한 scenario만 archive하고 같은 scenario만 재실행할 수 있습니다.
 
 ## 예상 소요 시간
 
@@ -15,6 +25,17 @@
 - `results/workshop.env`를 fresh Cloud Shell에서도 다시 source할 수 있다.
 - 이전 실패 evidence를 삭제하지 않고 `results/failed-attempts/`로 옮긴 뒤 재시도할 준비가 되었다.
 
+
+## 태그 범례
+
+| 태그 | 의미 |
+|------|------|
+| 🟢 **실행** | 참가자가 직접 입력하거나 수행해야 하는 단계 |
+| 👁️ **설명** | 왜 이 단계를 하는지 이해하기 위한 읽기 전용 안내 |
+| 📋 **예상 출력** | 실행 결과와 비교할 기준 출력 |
+| ⚠️ **주의** | 비용, 순서, 안전성, 계약 조건 안내 |
+
+
 ## 진행 순서
 
 1. workshop state와 interactive-safe helper를 복구합니다.
@@ -22,6 +43,40 @@
 3. `aks-nap`을 3회 실행하고 run별 0 → 1 → 0 evidence를 확인합니다.
 4. `vn2-ondemand`를 3회 실행하고 raw JSON과 diagnostics를 확인합니다.
 5. 실패한 시나리오만 archive한 뒤 복구하고 다시 실행합니다.
+
+
+## 0. 세션 재연결 시 상태 복구 (선택)
+
+<details>
+<summary>fresh Cloud Shell에서 benchmark state 복구 명령 보기</summary>
+
+👁️ **설명**
+
+새 Cloud Shell에서는 `results/workshop.env` 를 먼저 불러와 `$RG` 와 `$STANDBY_POOL` 을 다시 확인합니다. 이 값이 맞지 않으면 benchmark evidence 경로도 달라집니다.
+
+🟢 **실행**
+
+```bash
+cd ~/aci-vn2-performance-workshop
+source results/workshop.env
+printf 'RG=%s\nSTANDBY_POOL=%s\n' "$RG" "$STANDBY_POOL"
+```
+
+📋 **예상 출력**
+
+- 현재 workshop resource group과 standby pool 이름이 한 번에 다시 보입니다.
+- 값이 비어 있으면 Module 02 또는 Module 03의 recovery 절차부터 다시 실행합니다.
+
+</details>
+
+👁️ **설명**
+
+아래 단계는 설명 → 실행 → 예상 출력 → 주의 순서로 읽습니다. 코드 블록은 순서를 바꾸지 말고, fail-fast로 멈추면 같은 단계에서 원인을 먼저 정리합니다.
+
+⚠️ **주의**
+
+선행 조건을 확인하지 못했거나 측정 상태가 불분명하면 다음 단계로 넘어가지 않습니다.
+
 
 ### 1) workshop state와 helper 준비
 
@@ -123,6 +178,8 @@ persistent errexit 설정은 사용하지 않습니다. checker나 benchmark의 
 check_nap_state "NAP zero-capacity precheck"
 ```
 
+🟢 **실행**
+
 helper를 복구하지 않은 shell에서는 다음 표준 명령을 직접 실행합니다.
 
 ```bash
@@ -133,6 +190,8 @@ helper를 복구하지 않은 shell에서는 다음 표준 명령을 직접 실�
   --timeout-seconds 1200 \
   --interval-seconds 15
 ```
+
+⚠️ **주의**
 
 exit code가 0일 때만 benchmark를 시작합니다. RC=2이면 NodePool 상태를 복구하고, RC=3이면 남은 node/NodeClaim과 workload를 조사합니다. zero state가 확인되지 않은 상태에서 다음 run을 시작하지 않습니다.
 
@@ -189,6 +248,8 @@ done
 
 find results/diagnostics -maxdepth 2 -type f -path '*/aks-nap-run-*/*' | sort
 ```
+
+📋 **예상 출력**
 
 성공한 각 run에서 다음 연결을 확인합니다.
 

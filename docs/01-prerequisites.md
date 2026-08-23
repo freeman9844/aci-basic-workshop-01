@@ -1,8 +1,16 @@
-# Module 01. 사전 검사와 참가 조건 확인
+# 01. 사전 검사와 참가 조건 확인
+
+> Azure Cloud Shell Bash에서 구독, provider, feature/GA 상태, Standby Pool Resource Provider RBAC, preflight 결과를 한 흐름으로 점검합니다.
+
 
 ## 목표
 
-참가자가 워크숍 시작 전에 전용 교육용 구독, Owner 권한, 필수 도구, provider 등록 상태, 과거 preview feature/현재 GA 게이트, 그리고 Standby Pool Resource Provider용 구독 RBAC를 한 번에 검증하도록 합니다.
+이 모듈을 완료하면 다음을 할 수 있습니다.
+
+- 전용 교육용 구독, Owner 권한, provider 등록, feature/GA 상태를 fail-fast로 확인할 수 있습니다.
+- `Standby Pool Resource Provider` 서비스 주체에 필요한 세 가지 구독 역할을 정확히 부여할 수 있습니다.
+- `./scripts/preflight.sh` 로 Azure CLI 2.76.0 이상, `Standard_D16s_v5`, `Standard_D4s_v5`, quota headroom을 검증할 수 있습니다.
+- `results/environment.json` 을 다음 모듈의 기준 입력으로 보존할 수 있습니다.
 
 ## 예상 소요 시간
 
@@ -15,6 +23,17 @@
 - 아직 workshop 리소스 그룹이나 AKS 클러스터를 만들지 않았다.
 - 이 모듈은 워크숍 시작 전에 한 번, 실습 시작 직전에 한 번 다시 확인한다.
 
+
+## 태그 범례
+
+| 태그 | 의미 |
+|------|------|
+| 🟢 **실행** | 참가자가 직접 입력하거나 수행해야 하는 단계 |
+| 👁️ **설명** | 왜 이 단계를 하는지 이해하기 위한 읽기 전용 안내 |
+| 📋 **예상 출력** | 실행 결과와 비교할 기준 출력 |
+| ⚠️ **주의** | 비용, 순서, 안전성, 계약 조건 안내 |
+
+
 ## 진행 순서
 
 1. 현재 Azure 구독이 실습용 전용 구독인지 확인하고 provider를 미리 등록합니다.
@@ -24,9 +43,23 @@
 5. `results/environment.json` 을 확인하고 다음 모듈에서 그대로 재사용합니다.
 6. 모든 fail-fast 블록은 subshell keeps the interactive parent Cloud Shell safe 원칙으로 감쌉니다.
 
+
+👁️ **설명**
+
+아래 단계는 설명 → 실행 → 예상 출력 → 주의 순서로 읽습니다. 코드 블록은 순서를 바꾸지 말고, fail-fast로 멈추면 같은 단계에서 원인을 먼저 정리합니다.
+
+⚠️ **주의**
+
+선행 조건을 확인하지 못했거나 측정 상태가 불분명하면 다음 단계로 넘어가지 않습니다.
+
+
 ### 1) 워크숍 하루 전: provider 등록과 feature/GA 상태 확인
 
+👁️ **설명**
+
 아래 블록은 Cloud Shell Bash에서 그대로 실행할 수 있습니다. fail-fast 설정은 subshell 안에서만 켜고, `ResourceNotFound` 가 나오면 preview feature가 GA로 전환된 상태로 해석합니다.
+
+🟢 **실행**
 
 ```bash
 cd ~/aci-vn2-performance-workshop
@@ -142,6 +175,8 @@ cd ~/aci-vn2-performance-workshop
 
 NAP에는 Azure CLI 2.76.0 이상과 managed identity, Standard Load Balancer가 필요합니다. 클러스터 생성 후에는 managed NAP controller와 NAP CRDs가 준비되었는지도 Module 02에서 확인합니다. 이 preflight는 고정 system node용 `Standard_D16s_v5`와 NAP node용 `Standard_D4s_v5`를 각각 검사하고, 두 VM을 동시에 만들 수 있도록 combined regional vCPU headroom of 20을 요구합니다.
 
+📋 **예상 출력**
+
 성공 예시는 다음과 같습니다.
 
 ```text
@@ -167,6 +202,8 @@ regional VM quota가 모자라면 다음처럼 멈춰야 정상입니다.
 ```text
 ERROR: regional vCPU headroom is 15; need at least 20
 ```
+
+⚠️ **주의**
 
 Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모듈로 진행하지 말고** 여기서 중단합니다. 이 워크숍은 fail-fast를 원칙으로 하므로 불완전한 선행 조건을 묵인하지 않습니다.
 

@@ -1,8 +1,16 @@
-# Module 05. StandbyPool과 Image Cache 측정 실행
+# 05. StandbyPool과 Image Cache 측정 실행
+
+> 기본 StandbyPool 경로와 Image Cache 적용 경로를 같은 pool에서 순서대로 측정하고, recycle/refill evidence를 보존합니다.
+
 
 ## 목표
 
-일반적인 pre-provisioned StandbyPool 조건인 `vn2-standby`를 먼저 5 Pods × 3회 측정합니다. 그다음 Image Cache 요청을 적용하고 같은 pool을 5 → 0 → 5로 deterministic pool recycle한 뒤 health를 다시 확인해 `vn2-standby-cached`를 3회 측정합니다. 실패나 timeout evidence는 삭제하지 않습니다.
+이 모듈을 완료하면 다음을 할 수 있습니다.
+
+- `results/workshop.env` 와 standby helper를 복구해 같은 `$RG` 와 `$STANDBY_POOL` 을 계속 사용할 수 있습니다.
+- `vn2-standby` 와 `vn2-standby-cached` 를 같은 일반적인 pre-provisioned StandbyPool 조건에서 각각 3회 실행할 수 있습니다.
+- deterministic pool recycle 기준으로 `--max-ready-capacity 5 → 0 → 5` recycle/refill과 Image Cache request를 분리해 해석할 수 있습니다.
+- 실패한 standby scenario만 archive하고 필요한 recovery 순서를 지켜 재실행할 수 있습니다.
 
 ## 예상 소요 시간
 
@@ -15,6 +23,17 @@
 - Module 04의 6개 성공 raw 파일 또는 실패/timeout evidence가 보존되어 있다.
 - Image Cache 적용 전 기본 StandbyPool 측정을 먼저 완료한다.
 
+
+## 태그 범례
+
+| 태그 | 의미 |
+|------|------|
+| 🟢 **실행** | 참가자가 직접 입력하거나 수행해야 하는 단계 |
+| 👁️ **설명** | 왜 이 단계를 하는지 이해하기 위한 읽기 전용 안내 |
+| 📋 **예상 출력** | 실행 결과와 비교할 기준 출력 |
+| ⚠️ **주의** | 비용, 순서, 안전성, 계약 조건 안내 |
+
+
 ## 진행 순서
 
 1. workshop state와 interactive-safe helper를 복구합니다.
@@ -24,6 +43,40 @@
 5. 같은 pool을 running 5 → 0 → 5로 recycle합니다.
 6. cached run 직전에 healthy/running 5를 다시 확인합니다.
 7. `vn2-standby-cached`를 3회 실행하고 실패한 scenario만 archive/retry합니다.
+
+
+## 0. 세션 재연결 시 상태 복구 (선택)
+
+<details>
+<summary>fresh Cloud Shell에서 standby benchmark state 복구 명령 보기</summary>
+
+👁️ **설명**
+
+StandbyPool 측정은 같은 `$STANDBY_POOL` 을 계속 사용해야 해석이 맞습니다. 새 Cloud Shell에서는 state file을 다시 불러오고, 필요하면 pool health check부터 다시 시작합니다.
+
+🟢 **실행**
+
+```bash
+cd ~/aci-vn2-performance-workshop
+source results/workshop.env
+printf 'RG=%s\nSTANDBY_POOL=%s\n' "$RG" "$STANDBY_POOL"
+```
+
+📋 **예상 출력**
+
+- 같은 resource group과 standby pool 이름이 다시 보여야 합니다.
+- 값이 비어 있으면 Module 03 recovery 후 2단계의 health check부터 다시 진행합니다.
+
+</details>
+
+👁️ **설명**
+
+아래 단계는 설명 → 실행 → 예상 출력 → 주의 순서로 읽습니다. 코드 블록은 순서를 바꾸지 말고, fail-fast로 멈추면 같은 단계에서 원인을 먼저 정리합니다.
+
+⚠️ **주의**
+
+선행 조건을 확인하지 못했거나 측정 상태가 불분명하면 다음 단계로 넘어가지 않습니다.
+
 
 ### 1) workshop state와 helper 준비
 
@@ -116,6 +169,8 @@ require_workshop_vars
 
 persistent errexit 설정은 사용하지 않습니다. pool checker와 benchmark의 exit code를 기록한 뒤 같은 shell에서 복구를 계속합니다.
 
+🟢 **실행**
+
 helper 호출 형태는 다음과 같습니다.
 
 ```bash
@@ -137,6 +192,8 @@ check_pool_state "standby healthy check" 5
 ./scripts/check-standby-pool.sh -g "$RG" -n "$STANDBY_POOL" \
   --expect-running 5 --timeout-seconds 1200 --interval-seconds 15
 ```
+
+⚠️ **주의**
 
 healthy/running 5가 확인되어야 기본 StandbyPool benchmark를 시작합니다. runner도 각 run 전후 같은 pool과 기대 running count를 검사하므로 capacity가 refill되지 않으면 다음 run을 시작하지 않습니다.
 
@@ -304,6 +361,8 @@ jq -r '.pods[] | [.name, .terminal_state, .create_to_ready_ms, .node_name] | @ts
 jq '{scenario, run, batch: {first_ready_ms: .batch.first_ready_ms, all_ready_ms: .batch.all_ready_ms}}' results/raw/vn2-standby-cached-run-1.json
 find results/diagnostics -maxdepth 2 -type f -path '*/vn2-standby-cached-run-*/*' | sort
 ```
+
+📋 **예상 출력**
 
 `results/diagnostics/vn2-standby-cached-run-1/`의 pool pre/post 상태와 ACI inventory를 recycle evidence와 함께 해석합니다.
 

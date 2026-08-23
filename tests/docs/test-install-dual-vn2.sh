@@ -151,16 +151,70 @@ for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", 
 if "다음 모듈에서 그대로 재사용" not in text:
     raise SystemExit("docs/03-install-dual-vn2.md must say STANDBY_POOL continues into the next module")
 
-recovery_sequence = "\n".join(
-    [
-        'source "$WORKSHOP_STATE"',
-        'az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing',
-    ]
+step1_match = re.search(
+    r"### 1\) Module 02 state file 과 AKS context 연속성 확인\n\n```bash\n(.*?)```",
+    text,
+    re.S,
 )
-if recovery_sequence not in text:
-    raise SystemExit(
-        "docs/03-install-dual-vn2.md must restore kubeconfig immediately after loading workshop state"
+if not step1_match:
+    raise SystemExit("docs/03-install-dual-vn2.md must contain the step 1 bash block")
+
+step1_block = step1_match.group(1)
+recovery_scratch = root / ".test-doc-install-dual-vn2-recovery"
+if recovery_scratch.exists():
+    shutil.rmtree(recovery_scratch)
+
+try:
+    recovery_home = recovery_scratch / "home"
+    workshop = recovery_home / "aci-vn2-performance-workshop"
+    fake_bin = recovery_scratch / "bin"
+    fake_bin.mkdir(parents=True)
+    (workshop / "results").mkdir(parents=True)
+    (workshop / "scripts").mkdir()
+    (workshop / "results" / "workshop.env").write_text(
+        "\n".join(
+            [
+                "export RG='rg-vn2-bench-10001'",
+                "export AKS='aks-vn2-bench'",
+                "export CG_SUBNET='cg'",
+                "export AKS_IDENTITY='id-aks-vn2-bench'",
+                "export AKS_IDENTITY_ID='/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-bench'",
+                "export NAP_VM_SIZE='Standard_D4s_v5'",
+                "export NAP_NODEPOOL='workshop-nap'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
     )
+    checker = workshop / "scripts" / "check-nap-capacity.sh"
+    checker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    checker.chmod(0o755)
+    fake_az = fake_bin / "az"
+    fake_az.write_text("#!/usr/bin/env bash\nexit 42\n", encoding="utf-8")
+    fake_az.chmod(0o755)
+    fake_kubectl = fake_bin / "kubectl"
+    fake_kubectl.write_text(
+        f"#!/usr/bin/env bash\n: >{(recovery_scratch / 'kubectl-ran').as_posix()!r}\nexit 0\n",
+        encoding="utf-8",
+    )
+    fake_kubectl.chmod(0o755)
+
+    recovery = subprocess.run(
+        ["bash", "-c", step1_block],
+        cwd=root,
+        env={"HOME": str(recovery_home), "PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+    if recovery.returncode != 42:
+        raise SystemExit(
+            f"Step 1 must return the az aks get-credentials failure (42), found {recovery.returncode}"
+        )
+    if (recovery_scratch / "kubectl-ran").exists():
+        raise SystemExit("Step 1 must not run kubectl after az aks get-credentials fails")
+finally:
+    if recovery_scratch.exists():
+        shutil.rmtree(recovery_scratch)
 
 step2_match = re.search(
     r"### 2\) VN2 chart 저장소 추가와 pinned release 값 선언\n\n```bash\n(.*?)```",

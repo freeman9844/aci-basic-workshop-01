@@ -25,8 +25,10 @@ fresh Cloud Shell recovery 가 필요하면 저장소 루트에서 아래처럼 
 
 ```bash
 cd ~/aci-vn2-performance-workshop
-source results/workshop.env
-az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
+( set -euo pipefail
+  source results/workshop.env
+  az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
+)
 ```
 
 `results/workshop.env` 가 없다면 Module 07의 fresh-session recovery 절차로 정확한 workshop RG를 다시 확인한 뒤 파일을 복구하고 진행합니다.

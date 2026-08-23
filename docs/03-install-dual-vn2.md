@@ -67,14 +67,14 @@ persist_workshop_state() {
   mv "$STATE_TMP" "$WORKSHOP_STATE"
 }
 
-if [[ ! -f "$WORKSHOP_STATE" ]]; then
-  printf 'Missing %s. Run Module 02 first or recover the exact workshop state before continuing.\n' "$WORKSHOP_STATE" >&2
-  exit 1
-fi
-source "$WORKSHOP_STATE"
-az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
-
 ( set -euo pipefail
+  if [[ ! -f "$WORKSHOP_STATE" ]]; then
+    printf 'Missing %s. Run Module 02 first or recover the exact workshop state before continuing.\n' "$WORKSHOP_STATE" >&2
+    exit 1
+  fi
+  source "$WORKSHOP_STATE"
+  az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
+
   : "${RG:?Run Module 02 first or recover results/workshop.env before continuing.}"
   : "${AKS:?Run Module 02 first or recover results/workshop.env before continuing.}"
   : "${CG_SUBNET:?Run Module 02 first or recover results/workshop.env before continuing.}"

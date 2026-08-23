@@ -159,11 +159,13 @@ for required in (
 
 readme_recovery_sequence = "\n".join(
     [
-        "source results/workshop.env",
-        'az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing',
+        "( set -euo pipefail",
+        "  source results/workshop.env",
+        '  az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing',
+        ")",
     ]
 )
 if readme_recovery_sequence not in readme_text:
-    raise SystemExit("README fresh-shell recovery must restore kubeconfig immediately after loading workshop state")
+    raise SystemExit("README fresh-shell recovery must fail fast while restoring kubeconfig")
 
 PY

@@ -259,6 +259,53 @@ run_tolerant_bounded() {
   fi
 }
 
+sweep_benchmark_namespaces() {
+  local started_at output status elapsed remaining namespace
+  started_at="$SECONDS"
+
+  set +e
+  output="$(timeout --signal=KILL "${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s" \
+    "$KUBECTL_BIN" get namespaces \
+    -o 'jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}' 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+    operation_failures+=("discover benchmark namespaces with prefix vn2-bench-: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s")
+    return
+  fi
+  if [[ "$status" -ne 0 ]]; then
+    operation_failures+=("discover benchmark namespaces with prefix vn2-bench-: ${output:-command failed}")
+    return
+  fi
+
+  while IFS= read -r namespace; do
+    if [[ "$namespace" != vn2-bench-* ]]; then
+      continue
+    fi
+
+    elapsed=$((SECONDS - started_at))
+    remaining=$((CLUSTER_CLEANUP_TIMEOUT_SECONDS - elapsed))
+    if ((remaining <= 0)); then
+      operation_failures+=("benchmark namespace sweep: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s before deleting remaining namespaces")
+      return
+    fi
+
+    set +e
+    output="$(timeout --signal=KILL "${remaining}s" \
+      "$KUBECTL_BIN" delete namespace "$namespace" \
+      --ignore-not-found=true --wait=false 2>&1)"
+    status=$?
+    set -e
+
+    if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+      operation_failures+=("delete namespace $namespace: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s")
+    elif [[ "$status" -ne 0 ]]; then
+      operation_failures+=("delete namespace $namespace: ${output:-command failed}")
+    fi
+  done <<<"$output"
+}
+
 observe_nodeclaims_zero() {
   local started_at output status elapsed remaining sleep_seconds
   started_at="$SECONDS"
@@ -368,8 +415,7 @@ if [[ "$assume_yes" != "true" ]]; then
   prompt_for_confirmation "${standby_pools[@]}"
 fi
 
-run_tolerant_bounded "delete namespace benchmark" \
-  "$KUBECTL_BIN" delete namespace benchmark --ignore-not-found=true --wait=false
+sweep_benchmark_namespaces
 run_tolerant_bounded "delete namespace vn2-image-cache" \
   "$KUBECTL_BIN" delete namespace vn2-image-cache --ignore-not-found=true --wait=false
 run_tolerant_bounded "delete NodePool workshop-nap" \

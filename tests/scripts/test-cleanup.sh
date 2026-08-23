@@ -17,10 +17,50 @@ cat >"$TMP/bin/kubectl" <<'FAKE_KUBECTL'
 set -euo pipefail
 printf 'kubectl %s\n' "$*" >> "$TEST_LOG_DIR/commands.log"
 
+namespace_list_command='get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}'
+if [[ "$*" == "$namespace_list_command" ]]; then
+  case "${KUBECTL_MODE:-success}" in
+    hang-namespace-list)
+      sleep 30
+      ;;
+    cluster-missing)
+      printf 'The connection to the server localhost:6443 was refused\n' >&2
+      exit 1
+      ;;
+    *)
+      if [[ -n "${NAMESPACE_LIST+x}" ]]; then
+        printf '%s\n' "$NAMESPACE_LIST"
+      else
+        printf '%s\n' \
+          vn2-bench-aks-nap-r1-111 \
+          vn2-bench-vn2-ondemand-r2-222 \
+          benchmark \
+          vn2-benchmark-unrelated \
+          default
+      fi
+      exit 0
+      ;;
+  esac
+fi
+
+if [[ "$*" == delete\ namespace\ vn2-bench-* ]]; then
+  case "${KUBECTL_MODE:-success}" in
+    hang-namespace-delete)
+      sleep 30
+      ;;
+    cluster-missing)
+      printf 'The connection to the server localhost:6443 was refused\n' >&2
+      exit 1
+      ;;
+    *)
+      exit 0
+      ;;
+  esac
+fi
+
 case "${KUBECTL_MODE:-success}" in
-  success)
+  success|hang-namespace-list|hang-namespace-delete)
     case "$*" in
-      "delete namespace benchmark --ignore-not-found=true --wait=false"|\
       "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
       "delete nodepool workshop-nap --ignore-not-found=true --wait=false"|\
       "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false"|\
@@ -35,7 +75,6 @@ case "${KUBECTL_MODE:-success}" in
       "delete nodepool workshop-nap --ignore-not-found=true --wait=false")
         sleep 30
         ;;
-      "delete namespace benchmark --ignore-not-found=true --wait=false"|\
       "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
       "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false"|\
       "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
@@ -48,7 +87,6 @@ case "${KUBECTL_MODE:-success}" in
       "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
         sleep 30
         ;;
-      "delete namespace benchmark --ignore-not-found=true --wait=false"|\
       "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
       "delete nodepool workshop-nap --ignore-not-found=true --wait=false"|\
       "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false")
@@ -62,7 +100,6 @@ case "${KUBECTL_MODE:-success}" in
         printf 'nodeclaim.karpenter.sh/workshop-nap-test\n'
         exit 0
         ;;
-      "delete namespace benchmark --ignore-not-found=true --wait=false"|\
       "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
       "delete nodepool workshop-nap --ignore-not-found=true --wait=false"|\
       "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false")
@@ -248,7 +285,9 @@ expected = [
     "az account show --query id --output tsv",
     "az group exists --name rg-test",
     "az group show --name rg-test --query name --output tsv",
-    "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
+    'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
+    "kubectl delete namespace vn2-bench-aks-nap-r1-111 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-bench-vn2-ondemand-r2-222 --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
     "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
     "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
@@ -263,6 +302,64 @@ expected = [
 if lines != expected:
     raise SystemExit(f"unexpected command order: {lines!r}")
 PY
+
+if grep -F 'kubectl delete namespace benchmark ' "$TMP/logs/commands.log" >/dev/null; then
+  echo 'cleanup must not delete the unrelated literal benchmark namespace' >&2
+  exit 1
+fi
+if grep -F 'kubectl delete namespace vn2-benchmark-unrelated ' "$TMP/logs/commands.log" >/dev/null; then
+  echo 'cleanup must only delete namespaces with the exact vn2-bench- prefix' >&2
+  exit 1
+fi
+
+rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
+set +e
+hanging_namespace_list_output="$(timeout 5s env \
+  TEST_LOG_DIR="$TMP/logs" \
+  AZ_STATE_DIR="$TMP/state" \
+  AZ_BIN="$TMP/bin/az" \
+  KUBECTL_BIN="$TMP/bin/kubectl" \
+  HELM_BIN="$TMP/bin/helm" \
+  AZ_MODE=success \
+  KUBECTL_MODE=hang-namespace-list \
+  CLUSTER_CLEANUP_TIMEOUT_SECONDS=1 \
+  "$ROOT/scripts/cleanup.sh" \
+  --resource-group rg-test \
+  --ondemand-namespace vn2-ondemand \
+  --standby-namespace vn2-standby \
+  --yes 2>&1)"
+hanging_namespace_list_status=$?
+set -e
+
+[[ "$hanging_namespace_list_status" -eq 0 ]]
+grep -F 'discover benchmark namespaces with prefix vn2-bench-: timed out after 1s' <<<"$hanging_namespace_list_output" >/dev/null
+grep -F 'Cleanup completed with warnings.' <<<"$hanging_namespace_list_output" >/dev/null
+grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
+
+rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
+set +e
+hanging_namespace_delete_output="$(timeout 5s env \
+  TEST_LOG_DIR="$TMP/logs" \
+  AZ_STATE_DIR="$TMP/state" \
+  AZ_BIN="$TMP/bin/az" \
+  KUBECTL_BIN="$TMP/bin/kubectl" \
+  HELM_BIN="$TMP/bin/helm" \
+  AZ_MODE=success \
+  KUBECTL_MODE=hang-namespace-delete \
+  NAMESPACE_LIST=vn2-bench-hanging \
+  CLUSTER_CLEANUP_TIMEOUT_SECONDS=1 \
+  "$ROOT/scripts/cleanup.sh" \
+  --resource-group rg-test \
+  --ondemand-namespace vn2-ondemand \
+  --standby-namespace vn2-standby \
+  --yes 2>&1)"
+hanging_namespace_delete_status=$?
+set -e
+
+[[ "$hanging_namespace_delete_status" -eq 0 ]]
+grep -F 'delete namespace vn2-bench-hanging: timed out after 1s' <<<"$hanging_namespace_delete_output" >/dev/null
+grep -F 'Cleanup completed with warnings.' <<<"$hanging_namespace_delete_output" >/dev/null
+grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -355,7 +452,7 @@ set -e
 
 [[ "$cluster_unreachable_status" -eq 0 ]]
 grep -F 'WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.' <<<"$cluster_unreachable_output" >/dev/null
-grep -F 'delete namespace benchmark: The connection to the server localhost:6443 was refused' <<<"$cluster_unreachable_output" >/dev/null
+grep -F 'discover benchmark namespaces with prefix vn2-bench-: The connection to the server localhost:6443 was refused' <<<"$cluster_unreachable_output" >/dev/null
 grep -F 'delete NodePool workshop-nap: The connection to the server localhost:6443 was refused' <<<"$cluster_unreachable_output" >/dev/null
 grep -F 'uninstall Helm release vn2-standby: Kubernetes cluster unreachable' <<<"$cluster_unreachable_output" >/dev/null
 grep -F 'Cleanup completed with warnings.' <<<"$cluster_unreachable_output" >/dev/null
@@ -367,7 +464,7 @@ expected = [
     "az account show --query id --output tsv",
     "az group exists --name rg-test",
     "az group show --name rg-test --query name --output tsv",
-    "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
+    'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
     "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
     "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
@@ -407,7 +504,9 @@ expected = [
     "az account show --query id --output tsv",
     "az group exists --name rg-test",
     "az group show --name rg-test --query name --output tsv",
-    "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
+    'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
+    "kubectl delete namespace vn2-bench-aks-nap-r1-111 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-bench-vn2-ondemand-r2-222 --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
     "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
     "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
@@ -584,7 +683,9 @@ expected = [
     "az account show --query id --output tsv",
     "az group exists --name rg-test",
     "az group show --name rg-test --query name --output tsv",
-    "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
+    'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
+    "kubectl delete namespace vn2-bench-aks-nap-r1-111 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-bench-vn2-ondemand-r2-222 --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
     "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
     "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
@@ -626,7 +727,9 @@ expected = [
     "az account show --query id --output tsv",
     "az group exists --name rg-test",
     "az group show --name rg-test --query name --output tsv",
-    "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
+    'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
+    "kubectl delete namespace vn2-bench-aks-nap-r1-111 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-bench-vn2-ondemand-r2-222 --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
     "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
     "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",

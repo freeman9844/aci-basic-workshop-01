@@ -45,6 +45,7 @@ required_04 = [
     "./scripts/run-benchmark.sh \\",
     "--scenario aks-nap",
     "--scenario vn2-ondemand",
+    "--resource-group \"$RG\"",
     "--runs 3",
     "--output-dir results",
     "find results/raw -maxdepth 1 -type f -name 'aks-nap-run-*.json' | sort",
@@ -208,18 +209,26 @@ for text, path in ((text04, module04), (text05, module05)):
             if flag not in allowed_run_benchmark_flags:
                 raise SystemExit(f"{path.name} uses unsupported run-benchmark.sh flag: {flag}")
 
-scenario_runs = {
-    "aks-nap": text04,
-    "vn2-ondemand": text04,
-    "vn2-standby": text05,
-    "vn2-standby-cached": text05,
+scenario_patterns = {
+    "aks-nap": (
+        text04,
+        r"\.\/scripts\/run-benchmark\.sh \\\n\s+--scenario aks-nap \\\n\s+--runs 3 \\\n\s+--output-dir results",
+    ),
+    "vn2-ondemand": (
+        text04,
+        r"\.\/scripts\/run-benchmark\.sh \\\n\s+--scenario vn2-ondemand \\\n\s+--runs 3 \\\n\s+--resource-group \"\$RG\" \\\n\s+--output-dir results",
+    ),
+    "vn2-standby": (
+        text05,
+        r"\.\/scripts\/run-benchmark\.sh \\\n\s+--scenario vn2-standby \\\n\s+--runs 3 \\\n\s+--resource-group \"\$RG\" \\\n\s+--standby-pool \"\$STANDBY_POOL\" \\\n\s+--output-dir results",
+    ),
+    "vn2-standby-cached": (
+        text05,
+        r"\.\/scripts\/run-benchmark\.sh \\\n\s+--scenario vn2-standby-cached \\\n\s+--runs 3 \\\n\s+--resource-group \"\$RG\" \\\n\s+--standby-pool \"\$STANDBY_POOL\" \\\n\s+--output-dir results",
+    ),
 }
-for scenario, text in scenario_runs.items():
-    pattern = re.compile(
-        rf"\.\/scripts\/run-benchmark\.sh \\\n\s+--scenario {re.escape(scenario)} \\\n\s+--runs 3 \\\n(?:\s+--resource-group \"\$RG\" \\\n\s+--standby-pool \"\$STANDBY_POOL\" \\\n)?\s+--output-dir results",
-        re.M,
-    )
-    if not pattern.search(text):
+for scenario, (text, pattern) in scenario_patterns.items():
+    if not re.search(pattern, text, re.M):
         raise SystemExit(f"Missing exact benchmark invocation for scenario: {scenario}")
 
 if text05.count("--refill-policy always") < 2:

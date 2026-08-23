@@ -42,7 +42,7 @@ RUN_WAIT_STATUS=0
 
 usage() {
   cat <<'EOF'
-Usage: run-benchmark.sh --scenario NAME --runs N --output-dir DIR [--scenario-timeout-seconds N] [--render-only] [--resource-group RG --standby-pool NAME]
+Usage: run-benchmark.sh --scenario NAME --runs N --output-dir DIR [--scenario-timeout-seconds N] [--render-only] [--resource-group RG] [--standby-pool NAME]
 EOF
 }
 
@@ -132,6 +132,11 @@ case "$scenario" in
     exit 64
     ;;
 esac
+
+if [[ "$render_only" != "true" && "$scenario" == vn2-* && -z "$resource_group" ]]; then
+  printf 'ERROR: VN2 scenarios require --resource-group to capture ACI inventory\n' >&2
+  exit 64
+fi
 
 collector_timeout="$TIMEOUT_SECONDS"
 if [[ "$scenario" == "aks-nap" ]]; then

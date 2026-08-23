@@ -36,6 +36,7 @@ Ratio가 1보다 크면 해당 candidate median이 VN2 OnDemand보다 빠르고,
 - **Cache 통제 조건:** cache request Pod가 `Running`인 상태에서 pool을 **5→0→5**로 deterministic recycle했고, `running=0`과 다시 `healthy`, `running=5`를 확인한 뒤 cached runs를 실행했습니다.
 - **실패와 timeout:** 12 runs, 60 Pods 모두 Ready였으며 `failed_count=0`, `timeout_count=0`입니다.
 - **fallback evidence:** 보존된 StandbyPool 전후 checks가 모두 `healthy`, `running=5`였으므로 fallback condition은 나타나지 않았습니다. 이 판단은 해당 health/capacity evidence 범위에 한정됩니다.
+- **VN2 OnDemand ACI inventory disclosure:** The 2026-08-23 OnDemand run's ACI inventory diagnostic was not captured because `--resource-group` was omitted, so each `az-container-list.json` was a skip placeholder. Kubernetes and raw benchmark evidence show VN2 OnDemand routing and 15 Ready Pods, but that evidence does not substitute for the missing ACI inventory.
 
 ## 해석 제한
 

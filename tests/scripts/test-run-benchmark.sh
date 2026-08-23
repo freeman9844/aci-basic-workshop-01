@@ -343,6 +343,7 @@ run_with_fakes \
 run_with_fakes \
   --scenario vn2-ondemand \
   --runs 3 \
+  --resource-group rg-test \
   --output-dir "$TMP/documented-runs"
 run_with_fakes \
   --scenario vn2-standby \
@@ -402,6 +403,21 @@ set -e
 [[ "$status" -eq 64 ]]
 grep -F 'ERROR: unsupported scenario: nope' <<<"$output" >/dev/null
 
+reset_behavior
+reset_logs
+set +e
+output="$(run_with_fakes \
+  --scenario vn2-ondemand \
+  --runs 1 \
+  --output-dir "$TMP/missing-vn2-resource-group" 2>&1)"
+status=$?
+set -e
+
+[[ "$status" -eq 64 ]]
+grep -F 'ERROR: VN2 scenarios require --resource-group to capture ACI inventory' <<<"$output" >/dev/null
+test ! -s "$TMP/logs/collector.log"
+test ! -s "$TMP/logs/kubectl.log"
+
 collector_lines_before=0
 if [[ -f "$TMP/logs/collector.log" ]]; then
   collector_lines_before="$(wc -l <"$TMP/logs/collector.log")"
@@ -440,6 +456,7 @@ set +e
 run_with_fakes \
   --scenario vn2-ondemand \
   --runs 1 \
+  --resource-group rg-test \
   --scenario-timeout-seconds 1 \
   --output-dir "$TMP/uncertain-create" >/dev/null 2>&1
 status=$?
@@ -498,6 +515,7 @@ reset_logs
 run_with_fakes \
   --scenario vn2-ondemand \
   --runs 1 \
+  --resource-group rg-test \
   --scenario-timeout-seconds 47 \
   --output-dir "$TMP/timeout-override"
 
@@ -545,6 +563,7 @@ set +e
 run_with_fakes \
   --scenario vn2-ondemand \
   --runs 1 \
+  --resource-group rg-test \
   --output-dir "$TMP/default-deadline" >/dev/null 2>&1
 status=$?
 set -e
@@ -601,6 +620,7 @@ set +e
 run_with_fakes \
   --scenario vn2-ondemand \
   --runs 1 \
+  --resource-group rg-test \
   --scenario-timeout-seconds 1 \
   --output-dir "$TMP/deadline-diagnostics" >/dev/null 2>&1
 status=$?
@@ -621,6 +641,7 @@ set +e
 run_with_fakes \
   --scenario vn2-ondemand \
   --runs 1 \
+  --resource-group rg-test \
   --scenario-timeout-seconds 1 \
   --output-dir "$TMP/deadline-cleanup" >/dev/null 2>&1
 status=$?

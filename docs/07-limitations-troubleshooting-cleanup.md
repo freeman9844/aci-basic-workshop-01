@@ -65,7 +65,7 @@ scripts/cleanup.sh --resource-group "$RG" --yes
 az group exists --name "$RG"
 ```
 
-`cleanup.sh`는 먼저 subscription ID와 resource group 존재 여부를 확인하고, RG가 이미 없으면 조기에 종료합니다. RG가 존재하면 `az standby-container-group-pool list --resource-group "$RG" --query '[].name' --output tsv`로 현재 RG 안의 standby pool 이름만 읽습니다. graceful cluster cleanup은 benchmark Pod가 든 `benchmark` namespace와 `vn2-image-cache` namespace를 먼저 삭제하고, 아래 순서로 NAP 리소스 삭제와 NodeClaim 0 관찰을 시도한 뒤 Helm release를 제거합니다.
+`cleanup.sh`는 먼저 subscription ID와 resource group 존재 여부를 확인하고, RG가 이미 없으면 조기에 종료합니다. RG가 존재하면 `az standby-container-group-pool list --resource-group "$RG" --query '[].name' --output tsv`로 현재 RG 안의 standby pool 이름만 읽습니다. graceful cluster cleanup은 exact `vn2-bench-` prefix를 가진 per-run namespace만 bounded best-effort sweep으로 삭제하고 `vn2-image-cache` namespace를 삭제한 뒤, 아래 순서로 NAP 리소스 삭제와 NodeClaim 0 관찰을 시도하고 Helm release를 제거합니다. Namespace listing or deletion times out or fails 하면 경고를 보존하고 billing-critical RG deletion을 계속합니다.
 
 ```bash
 kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false

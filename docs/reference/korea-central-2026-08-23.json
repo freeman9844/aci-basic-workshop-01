@@ -125,6 +125,11 @@
     "nap_lifecycle": "Each run began and ended with zero NAP nodes and zero NodeClaims; all five Pods in each run used one newly provisioned NAP node.",
     "standby_pool": "All three uncached runs recorded healthy and running=5 before and after the run.",
     "image_cache": "The cache request Pod was Running and the pool was deterministically recycled from running 5 to 0 and back to 5 before cached runs.",
-    "fallback": "No fallback condition was indicated by the retained healthy/running=5 pool checks; all 60 Pods became Ready with zero failures and zero timeouts."
+    "fallback": "No fallback condition was indicated by the retained healthy/running=5 pool checks; all 60 Pods became Ready with zero failures and zero timeouts.",
+    "vn2_ondemand_aci_inventory": {
+      "captured": false,
+      "reason": "The 2026-08-23 vn2-ondemand command omitted --resource-group, so each per-run az-container-list.json diagnostic was a skip placeholder.",
+      "routing_and_success_evidence": "Kubernetes and raw benchmark evidence showed VN2 OnDemand routing and all 15 Pods Ready; this does not substitute for the missing ACI inventory."
+    }
   }
 }

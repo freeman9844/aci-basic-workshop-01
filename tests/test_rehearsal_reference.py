@@ -110,6 +110,26 @@ class RehearsalReferenceTest(unittest.TestCase):
         ):
             self.assertIn(required, self.markdown)
 
+    def test_discloses_missing_ondemand_aci_inventory_without_overclaiming(self):
+        disclosure = self.reference["operational_evidence"][
+            "vn2_ondemand_aci_inventory"
+        ]
+        self.assertFalse(disclosure["captured"])
+        self.assertIn("--resource-group", disclosure["reason"])
+        self.assertIn("skip placeholder", disclosure["reason"])
+        self.assertIn("Kubernetes", disclosure["routing_and_success_evidence"])
+        self.assertIn("raw benchmark evidence", disclosure["routing_and_success_evidence"])
+        self.assertIn("does not substitute", disclosure["routing_and_success_evidence"])
+
+        for required in (
+            "ACI inventory diagnostic was not captured",
+            "`--resource-group` was omitted",
+            "skip placeholder",
+            "Kubernetes and raw benchmark evidence",
+            "does not substitute for the missing ACI inventory",
+        ):
+            self.assertIn(required, self.markdown)
+
     def test_participant_docs_link_current_reference_without_old_warm_aks_claims(self):
         markdown_link = (
             "[Korea Central 2026-08-23 live rehearsal reference]"

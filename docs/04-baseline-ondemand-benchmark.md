@@ -205,6 +205,7 @@ run_and_capture_rc "vn2-ondemand benchmark" \
   ./scripts/run-benchmark.sh \
     --scenario vn2-ondemand \
     --runs 3 \
+    --resource-group "$RG" \
     --output-dir results
 ONDEMAND_RC=$?
 
@@ -227,7 +228,7 @@ case "$ONDEMAND_RC" in
 esac
 ```
 
-이 경로는 standby ready capacity 없이 ACI container group을 net-new로 준비합니다.
+이 경로는 standby ready capacity 없이 ACI container group을 net-new로 준비합니다. 모든 VN2 scenario는 per-run ACI inventory를 남기기 위해 `--resource-group "$RG"`가 필수이며, 누락하면 runner가 benchmark 시작 전에 RC=64로 종료합니다. 따라서 VN2 run의 `az-container-list.json`이 resource group 누락 때문에 skip placeholder가 되는 것을 허용하지 않습니다.
 
 ```bash
 find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort
@@ -259,6 +260,7 @@ find results/diagnostics -maxdepth 2 -type f -path '*/vn2-ondemand-run-*/*' | so
 # ./scripts/run-benchmark.sh \
 #   --scenario vn2-ondemand \
 #   --runs 3 \
+#   --resource-group "$RG" \
 #   --output-dir results
 ```
 

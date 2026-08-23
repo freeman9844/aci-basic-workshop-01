@@ -128,6 +128,11 @@ required_07 = [
     "DaemonSet",
     "Kubernetes network policy",
     "residual resource IDs",
+    "fresh Cloud Shell session",
+    "missing kubeconfig",
+    "billing-critical RG deletion",
+    "WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.",
+    "Cleanup completed with warnings.",
 ]
 
 for item in required_07:

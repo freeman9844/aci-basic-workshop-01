@@ -47,6 +47,8 @@ false
 
 `cleanup.sh` 는 먼저 subscription ID 와 resource group 존재 여부를 확인하고, RG 가 이미 없으면 조기에 종료합니다. RG 가 존재하면 `az standby-container-group-pool list --resource-group "$RG" --query '[].name' --output tsv` 로 현재 RG 안의 standby pool 이름만 읽고, `benchmark` namespace, `vn2-image-cache` namespace, `vn2-standby` / `vn2-ondemand` Helm release, 그 RG 안의 standby pool, 마지막으로 RG 자체를 삭제합니다.
 
+fresh Cloud Shell session, authorized IP drift, 또는 missing kubeconfig 때문에 `kubectl`/`helm` 이 cluster unreachable warning 을 내더라도 billing-critical RG deletion 은 계속 진행되어야 합니다. 이 경우 `WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.` 또는 `Cleanup completed with warnings.` 같은 경고는 정상적인 evidence 이며, 숨기지 말고 CLI 출력 그대로 보존하십시오.
+
 `--yes` 를 빼면 script 는 subscription, resource group, Helm releases, standby pools 를 출력한 뒤 `type the resource group name exactly to continue` 를 요구합니다. 즉 cleanup scope 를 이름으로 다시 검증합니다.
 
 cleanup polling 이 실패하거나 RG 가 timeout 안에 사라지지 않으면 script 는 `az resource list --resource-group "$RG" --query '[].id' --output tsv` 를 호출해 residual resource IDs 를 출력합니다. 문서/티켓에는 이 exact residual resource IDs evidence 를 함께 남기십시오.
@@ -66,7 +68,7 @@ cleanup polling 이 실패하거나 RG 가 timeout 안에 사라지지 않으면
 
 1. `az group exists --name "$RG"` 가 아직 `true` 면 cleanup 이 끝나지 않은 것입니다.
 2. `az resource list --resource-group "$RG" --query '[].id' --output tsv` 로 exact residual resource IDs 를 확인합니다.
-3. `scripts/cleanup.sh --resource-group "$RG" --yes` 를 같은 RG 로 다시 실행합니다.
+3. fresh Cloud Shell session 이거나 kubeconfig 가 비어 있어도 `scripts/cleanup.sh --resource-group "$RG" --yes` 는 billing-critical RG deletion 을 다시 시도해야 합니다. cluster cleanup warning 이 보이면 expected evidence 로 간주하고 같은 RG 로 다시 실행합니다.
 4. 그래도 실패하면 resource ID 와 CLI 오류를 그대로 보존하고, 어떤 단계에서 멈췄는지 공유합니다.
 
 ## 완료 체크포인트

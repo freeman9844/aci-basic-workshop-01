@@ -116,8 +116,21 @@ show_residual_ids() {
   printf 'Residual resource IDs:\n%s\n' "$output" >&2
 }
 
+print_warning_summary() {
+  local header="$1"
+  if ((${#operation_failures[@]} == 0)); then
+    return 0
+  fi
+
+  {
+    printf '%s\n' "$header"
+    printf ' - %s\n' "${operation_failures[@]}"
+  } >&2
+}
+
 fail_with_residuals() {
   local message="$1"
+  print_warning_summary 'Warning summary:'
   printf 'ERROR: %s\n' "$message" >&2
   show_residual_ids
   exit 1
@@ -255,11 +268,7 @@ report_pending_failures_if_any() {
     return 0
   fi
 
-  {
-    printf 'One or more cleanup steps failed before resource group deletion:\n'
-    printf '%s\n' "${operation_failures[@]}"
-  } >&2
-  fail_with_residuals "cleanup aborted before deleting resource group $resource_group"
+  printf 'WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.\n' >&2
 }
 
 wait_for_resource_group_gone() {
@@ -270,7 +279,12 @@ wait_for_resource_group_gone() {
     check_group_exists
     case "$group_exists_result" in
       false)
-        printf 'Cleanup completed.\n'
+        if ((${#operation_failures[@]} == 0)); then
+          printf 'Cleanup completed.\n'
+        else
+          printf 'Cleanup completed with warnings.\n'
+          print_warning_summary 'Warning summary:'
+        fi
         return 0
         ;;
       error)
@@ -315,7 +329,8 @@ for pool_name in "${standby_pools[@]}"; do
   pool_delete_status=$?
   set -e
   if [[ "$pool_delete_status" -ne 0 ]]; then
-    fail_with_residuals "failed to delete standby pool $pool_name: ${pool_delete_output:-command failed}"
+    operation_failures+=("failed to delete standby pool $pool_name: ${pool_delete_output:-command failed}")
+    printf 'WARNING: failed to delete standby pool %s; continuing with resource group deletion because the resource group delete can remove child resources.\n' "$pool_name" >&2
   fi
 done
 

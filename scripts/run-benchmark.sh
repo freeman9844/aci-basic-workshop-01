@@ -273,9 +273,23 @@ render_manifest() {
   done
 }
 
+write_standby_timeout_evidence() {
+  local output_path="$1"
+  printf '%s\n' \
+    '{"creating":0,"deleting":0,"health":"timeout","provisioning_state":null,"running":0,"starting":0}' \
+    >"$output_path"
+}
+
+write_nap_timeout_evidence() {
+  local output_path="$1"
+  printf '%s\n' \
+    '{"health":"timeout","node_pool":"workshop-nap","nodes":0,"nodeclaims":0,"ready":false}' \
+    >"$output_path"
+}
+
 wait_for_standby_pool() {
   local output_path="$1"
-  local checker_timeout
+  local checker_timeout status
   if [[ "$node_path" != "standby" ]]; then
     return 0
   fi
@@ -288,20 +302,30 @@ wait_for_standby_pool() {
   checker_timeout="$(remaining_scenario_seconds "$STANDBY_TIMEOUT_SECONDS")"
   if (( checker_timeout <= 0 )); then
     printf 'ERROR: scenario deadline exceeded before standby capacity check\n' >&2
+    write_standby_timeout_evidence "$output_path"
     return 124
   fi
 
-  run_with_scenario_deadline "standby capacity check" "$CHECK_STANDBY_BIN" \
+  if run_with_scenario_deadline "standby capacity check" "$CHECK_STANDBY_BIN" \
     --resource-group "$resource_group" \
     --name "$standby_pool" \
     --expect-running 5 \
     --timeout-seconds "$checker_timeout" \
-    --interval-seconds "$STANDBY_INTERVAL_SECONDS" >"$output_path"
+    --interval-seconds "$STANDBY_INTERVAL_SECONDS" >"$output_path"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  if [[ "$status" -eq 124 && ! -s "$output_path" ]]; then
+    write_standby_timeout_evidence "$output_path"
+  fi
+  return "$status"
 }
 
 wait_for_nap_zero_capacity() {
   local output_path="$1"
-  local checker_timeout
+  local checker_timeout status
   if [[ "$scenario" != "aks-nap" ]]; then
     return 0
   fi
@@ -310,15 +334,25 @@ wait_for_nap_zero_capacity() {
   checker_timeout="$(remaining_scenario_seconds "$NAP_RESET_TIMEOUT_SECONDS")"
   if (( checker_timeout <= 0 )); then
     printf 'ERROR: scenario deadline exceeded before NAP capacity check\n' >&2
+    write_nap_timeout_evidence "$output_path"
     return 124
   fi
 
-  run_with_scenario_deadline "NAP capacity check" "$CHECK_NAP_BIN" \
+  if run_with_scenario_deadline "NAP capacity check" "$CHECK_NAP_BIN" \
     --name workshop-nap \
     --expect-nodes 0 \
     --expect-nodeclaims 0 \
     --timeout-seconds "$checker_timeout" \
-    --interval-seconds "$NAP_INTERVAL_SECONDS" >"$output_path"
+    --interval-seconds "$NAP_INTERVAL_SECONDS" >"$output_path"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  if [[ "$status" -eq 124 && ! -s "$output_path" ]]; then
+    write_nap_timeout_evidence "$output_path"
+  fi
+  return "$status"
 }
 
 cleanup_work_dir() {
@@ -530,7 +564,14 @@ run_single_benchmark() {
   RUN_CREATE_STATUS=$?
   set -e
   if [[ "$RUN_CREATE_STATUS" -ne 0 ]]; then
+    cleanup_deadline=$((SECONDS + NAMESPACE_WAIT_TIMEOUT_SECONDS))
+    set +e
+    run_with_cleanup_deadline "namespace deletion after uncertain creation" \
+      "$KUBECTL_BIN" delete namespace "$namespace" --ignore-not-found=true >/dev/null
+    wait_for_namespace_gone "$namespace"
+    cleanup_deadline=""
     rm -f "$manifest_path"
+    set -e
     return "$RUN_CREATE_STATUS"
   fi
 

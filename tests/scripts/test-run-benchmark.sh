@@ -126,6 +126,9 @@ case "$cmd $subcmd" in
       exit 1
     fi
     touch "$TEST_STATE_DIR/ns-$namespace"
+    if [[ "${CREATE_NAMESPACE_THEN_SLEEP:-0}" == "1" ]]; then
+      sleep "${CREATE_NAMESPACE_SLEEP_SECONDS:-4}"
+    fi
     printf 'namespace/%s created\n' "$namespace"
     ;;
   "describe pods")
@@ -188,7 +191,8 @@ reset_logs() {
 
 reset_behavior() {
   unset COLLECTOR_EXIT_RUN COLLECTOR_EXIT_CODE
-  unset FAIL_CREATE_NAMESPACE FAIL_KUBECTL_DESCRIBE_PODS FAIL_KUBECTL_GET_EVENTS
+  unset FAIL_CREATE_NAMESPACE CREATE_NAMESPACE_THEN_SLEEP CREATE_NAMESPACE_SLEEP_SECONDS
+  unset FAIL_KUBECTL_DESCRIBE_PODS FAIL_KUBECTL_GET_EVENTS
   unset FAIL_KUBECTL_GET_NODES FAIL_AZ_CONTAINER_LIST
   unset SLOW_STANDBY_CALL SLOW_STANDBY_SECONDS SLOW_NAP_CALL SLOW_NAP_SECONDS
   unset SLOW_COLLECTOR SLOW_COLLECTOR_SECONDS COLLECTOR_HONOR_TIMEOUT
@@ -209,6 +213,8 @@ run_with_fakes() {
     COLLECTOR_EXIT_RUN="${COLLECTOR_EXIT_RUN-}" \
     COLLECTOR_EXIT_CODE="${COLLECTOR_EXIT_CODE-}" \
     FAIL_CREATE_NAMESPACE="${FAIL_CREATE_NAMESPACE-}" \
+    CREATE_NAMESPACE_THEN_SLEEP="${CREATE_NAMESPACE_THEN_SLEEP-}" \
+    CREATE_NAMESPACE_SLEEP_SECONDS="${CREATE_NAMESPACE_SLEEP_SECONDS-}" \
     FAIL_KUBECTL_DESCRIBE_PODS="${FAIL_KUBECTL_DESCRIBE_PODS-}" \
     FAIL_KUBECTL_GET_EVENTS="${FAIL_KUBECTL_GET_EVENTS-}" \
     FAIL_KUBECTL_GET_NODES="${FAIL_KUBECTL_GET_NODES-}" \
@@ -251,6 +257,37 @@ assert_deadline_status() {
     printf 'expected %s to finish within deadline, took %sms\n' "$label" "$elapsed" >&2
     exit 1
   fi
+}
+
+assert_json_file() {
+  python3 - "$1" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+if not path.stat().st_size:
+    raise SystemExit(f"expected non-empty JSON evidence: {path}")
+with path.open(encoding="utf-8") as handle:
+    payload = json.load(handle)
+if not isinstance(payload, dict):
+    raise SystemExit(f"expected JSON object evidence: {path}")
+PY
+}
+
+assert_timeout_json_file() {
+  assert_json_file "$1"
+  python3 - "$1" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+with path.open(encoding="utf-8") as handle:
+    payload = json.load(handle)
+if payload.get("health") != "timeout":
+    raise SystemExit(f"expected synthesized timeout evidence: {payload}")
+PY
 }
 
 reset_behavior
@@ -332,6 +369,28 @@ fi
 
 reset_behavior
 reset_logs
+CREATE_NAMESPACE_THEN_SLEEP=1
+CREATE_NAMESPACE_SLEEP_SECONDS=4
+NAMESPACE_WAIT_TIMEOUT_SECONDS=1
+started_at="$(monotonic_milliseconds)"
+set +e
+run_with_fakes \
+  --scenario vn2-ondemand \
+  --runs 1 \
+  --scenario-timeout-seconds 1 \
+  --output-dir "$TMP/uncertain-create" >/dev/null 2>&1
+status=$?
+set -e
+assert_deadline_status "$status" "$started_at" "uncertain namespace creation"
+grep -F 'delete namespace ' "$TMP/logs/kubectl.log" | grep -F -- '--ignore-not-found=true' >/dev/null
+if find "$TMP/state" -name 'ns-*' -print -quit | grep -q .; then
+  echo 'expected uncertain namespace creation to be cleaned up' >&2
+  exit 1
+fi
+test ! -s "$TMP/logs/collector.log"
+
+reset_behavior
+reset_logs
 run_with_fakes \
   --scenario vn2-standby \
   --runs 1 \
@@ -344,8 +403,8 @@ test "$(wc -l <"$TMP/logs/standby.log")" -eq 2
 grep -F -- '--expect-running 5' "$TMP/logs/standby.log" >/dev/null
 grep -F -- '--resource-group rg-test' "$TMP/logs/standby.log" >/dev/null
 grep -F -- '--name pool-test' "$TMP/logs/standby.log" >/dev/null
-test -s "$TMP/standby-once/diagnostics/vn2-standby-run-1/standby-precheck.json"
-test -s "$TMP/standby-once/diagnostics/vn2-standby-run-1/standby-postcheck.json"
+assert_json_file "$TMP/standby-once/diagnostics/vn2-standby-run-1/standby-precheck.json"
+assert_json_file "$TMP/standby-once/diagnostics/vn2-standby-run-1/standby-postcheck.json"
 if find "$TMP/standby-once" -name '*.yaml' -print -quit | grep -q .; then
   echo 'expected one-run standby path to clean generated manifests' >&2
   exit 1
@@ -362,8 +421,8 @@ test -f "$TMP/nap-once/raw/aks-nap-run-1.json"
 test "$(wc -l <"$TMP/logs/nap.log")" -eq 2
 grep -F -- '--name workshop-nap --expect-nodes 0 --expect-nodeclaims 0' "$TMP/logs/nap.log" >/dev/null
 grep -F -- '--timeout-seconds 900' "$TMP/logs/collector.log" >/dev/null
-test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-precheck.json"
-test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-postcheck.json"
+assert_json_file "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-precheck.json"
+assert_json_file "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-postcheck.json"
 test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-nodepool.yaml"
 test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-nodeclaims.yaml"
 test -s "$TMP/nap-once/diagnostics/aks-nap-run-1/nap-events.txt"
@@ -403,7 +462,7 @@ if [[ "$status" -ne 2 ]]; then
   printf 'expected reserved collector timeout to exit 2, got %s\n' "$status" >&2
   exit 1
 fi
-test -e "$TMP/deadline-collector/diagnostics/aks-nap-run-1/nap-precheck.json"
+assert_json_file "$TMP/deadline-collector/diagnostics/aks-nap-run-1/nap-precheck.json"
 grep -F -- '--timeout-seconds 3' "$TMP/logs/collector.log" >/dev/null
 test -s "$TMP/deadline-collector/raw/aks-nap-run-1.json"
 grep -F '"completion_reason":"timeout"' \
@@ -445,7 +504,8 @@ run_with_fakes \
 status=$?
 set -e
 assert_deadline_status "$status" "$started_at" "standby precheck"
-test -e "$TMP/deadline-standby-precheck/diagnostics/vn2-standby-run-1/standby-precheck.json"
+assert_timeout_json_file \
+  "$TMP/deadline-standby-precheck/diagnostics/vn2-standby-run-1/standby-precheck.json"
 test ! -s "$TMP/logs/collector.log"
 
 reset_behavior
@@ -463,7 +523,8 @@ status=$?
 set -e
 assert_deadline_status "$status" "$started_at" "NAP postcheck"
 test -f "$TMP/deadline-postcheck/raw/aks-nap-run-1.json"
-test -e "$TMP/deadline-postcheck/diagnostics/aks-nap-run-1/nap-postcheck.json"
+assert_timeout_json_file \
+  "$TMP/deadline-postcheck/diagnostics/aks-nap-run-1/nap-postcheck.json"
 
 reset_behavior
 reset_logs

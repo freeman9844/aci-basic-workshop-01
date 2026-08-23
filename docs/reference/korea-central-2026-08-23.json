@@ -1,0 +1,84 @@
+{
+  "title": "Korea Central live rehearsal reference",
+  "run_date": "2026-08-23",
+  "environment": {
+    "region": "Korea Central",
+    "kubernetes_version": "1.34.9",
+    "aks_node_sku": "Standard_D16s_v5",
+    "aks_node_count": 1,
+    "vn2_helm_chart_version": "1.3410.26081102",
+    "standby_ready_capacity": 5,
+    "benchmark_image": "mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
+  },
+  "methodology": {
+    "runs_per_scenario": 3,
+    "pods_per_run": 5,
+    "total_runs": 12,
+    "total_ready_pods": 60,
+    "reference_only": true,
+    "not_sla": true,
+    "percentile_method": "nearest-rank p95"
+  },
+  "scenarios": {
+    "aks": {
+      "runs_count": 3,
+      "ready_samples": 15,
+      "failed_count": 0,
+      "timeout_count": 0,
+      "pod_create_to_ready_median_ms": 1352.234,
+      "pod_create_to_ready_p95_ms": 6356.668,
+      "batch_first_ready_median_ms": 1690.55463,
+      "batch_all_ready_median_ms": 2149.343247
+    },
+    "vn2-ondemand": {
+      "runs_count": 3,
+      "ready_samples": 15,
+      "failed_count": 0,
+      "timeout_count": 0,
+      "pod_create_to_ready_median_ms": 53850.771,
+      "pod_create_to_ready_p95_ms": 57387.775,
+      "batch_first_ready_median_ms": 40441.815154,
+      "batch_all_ready_median_ms": 57067.677611
+    },
+    "vn2-standby-uncached": {
+      "runs_count": 3,
+      "ready_samples": 15,
+      "failed_count": 0,
+      "timeout_count": 0,
+      "pod_create_to_ready_median_ms": 6942.525,
+      "pod_create_to_ready_p95_ms": 20341.501,
+      "batch_first_ready_median_ms": 5336.48883,
+      "batch_all_ready_median_ms": 20141.284932
+    },
+    "vn2-standby-cached": {
+      "runs_count": 3,
+      "ready_samples": 15,
+      "failed_count": 0,
+      "timeout_count": 0,
+      "pod_create_to_ready_median_ms": 5497.1,
+      "pod_create_to_ready_p95_ms": 18858.971,
+      "batch_first_ready_median_ms": 6260.899162,
+      "batch_all_ready_median_ms": 8081.523317
+    }
+  },
+  "comparisons": {
+    "uncached_speedup_vs_ondemand": {
+      "pod": 7.756655,
+      "batch": 2.833368
+    },
+    "cached_speedup_vs_ondemand": {
+      "pod": 9.796215,
+      "batch": 7.0615
+    },
+    "cached_gain_vs_uncached": {
+      "pod": 1.262943,
+      "batch": 2.492263
+    }
+  },
+  "operational_findings": [
+    "The earlier 8-vCPU node could not schedule both VN2 infrastructure releases and five 500m benchmark Pods concurrently; Standard_D16s_v5 was used for the successful rehearsal.",
+    "The benchmark collector must apply each manifest to its per-run namespace.",
+    "The cached scenario requires creating the image-cache Pod, recycling standby ready capacity from 5 to 0 and back to 5, and confirming running capacity is 5 before measurement.",
+    "Cleanup completed only after the workshop resource group existence check returned false."
+  ]
+}

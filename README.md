@@ -65,6 +65,12 @@ flowchart TB
 | `vn2-standby-uncached` | StandbyPool uncached | warm UVM, 이미지 캐시 없음 | standby capacity 자체 효과 분리 |
 | `vn2-standby-cached` | StandbyPool cached | warm UVM + benchmark image cache | warm standby + cache 조합의 최고 성능 비교 |
 
+## 실제 리허설 참고 결과
+
+2026-08-23 Korea Central에서 시나리오당 5 Pods × 3회로 전체 워크숍을 실행했으며 60/60 Pods가 Ready, 실패와 timeout은 0이었습니다. 당시 Standby cached는 VN2 OnDemand 대비 Pod median 9.796배, Batch all-ready median 7.062배 빨랐습니다.
+
+이 수치는 워크숍 결과 해석을 돕는 참고 표본이며 SLA나 기대 출력이 아닙니다. 환경, 전체 표, p95와 리허설 중 발견한 운영상 주의사항은 [Korea Central 실제 리허설 참고 결과](docs/reference/korea-central-2026-08-23.md)를 확인하세요.
+
 ## 사전 요구 사항
 
 - Azure Portal Cloud Shell Bash 또는 동등한 Bash 환경

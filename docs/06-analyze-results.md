@@ -95,6 +95,31 @@ scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p
 
 > **주의:** 이 워크숍의 p95와 speed-up 은 기술 통계입니다. **SLA가 아닙니다.** 실패/timeout sample을 숨기지 않습니다. 더 빠른 한 번의 run 도 제품 전체 성능 보장이 아닙니다.
 
+### 6) 실제 리허설 결과와 비교
+
+워크숍이 정상적으로 동작하는지 확인하기 위해 2026-08-23 Korea Central에서 전체 과정을 실제 실행했습니다. 당시 조건은 Kubernetes 1.34.9, `Standard_D16s_v5` 1대, Standby ready capacity 5, 시나리오당 5 Pods × 3회였습니다. 12개 run의 60개 Pod가 모두 Ready였고 실패와 timeout은 없었습니다.
+
+| 시나리오 | Pod create→ready Median | Batch all-ready Median | OnDemand 대비 Pod | OnDemand 대비 Batch |
+| --- | ---: | ---: | ---: | ---: |
+| AKS | 1,352.2 ms | 2,149.3 ms | - | - |
+| VN2 OnDemand | 53,850.8 ms | 57,067.7 ms | 기준 | 기준 |
+| Standby uncached | 6,942.5 ms | 20,141.3 ms | 7.757× | 2.833× |
+| Standby cached | 5,497.1 ms | 8,081.5 ms | 9.796× | 7.062× |
+
+이번 표본에서 Image Cache는 uncached 대비 Pod median을 1.263배, Batch all-ready median을 2.492배 개선했습니다. 다만 cached의 Batch first-ready median은 uncached보다 느렸으므로, 첫 Pod와 전체 burst 완료 지표를 분리해서 읽어야 합니다.
+
+상세 환경, p95, 운영상 발견 사항과 기계 판독 가능한 값은 다음 파일에서 확인합니다.
+
+```bash
+sed -n '1,220p' docs/reference/korea-central-2026-08-23.md
+jq '.' docs/reference/korea-central-2026-08-23.json
+```
+
+- [Korea Central 실제 리허설 참고 결과](./reference/korea-central-2026-08-23.md)
+- [기계 판독 가능한 리허설 결과 JSON](./reference/korea-central-2026-08-23.json)
+
+이 값은 참가자 결과가 같은 순서와 규모인지 점검하는 참고 자료입니다. Azure 지역 capacity, 시점, 이미지 상태, 네트워크와 구독 quota에 따라 달라질 수 있으며 기대 출력이나 SLA로 사용하지 않습니다.
+
 ## 완료 체크포인트
 
 - `python3 scripts/summarize-results.py --input results/raw --output-dir results` 를 실행했다.
@@ -103,6 +128,7 @@ scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p
 - `nearest-rank p95` 가 보간하지 않는 descriptive metric 임을 설명할 수 있다.
 - `failed_count`, `timeout_count`, `non_ready_pods` 를 숨기지 않고 개별 run evidence 와 함께 읽었다.
 - regular AKS warm image cache 결과를 standby/OnDemand burst 비용 판단과 섞지 않는다는 점을 설명할 수 있다.
+- 실제 리허설 참고값과 자신의 결과를 비교하되 SLA나 기대 출력으로 사용하지 않는다.
 
 ## 문제 해결
 

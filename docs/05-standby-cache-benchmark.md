@@ -308,14 +308,30 @@ find results/diagnostics -maxdepth 2 -type f -path '*/vn2-standby-cached-run-*/*
 
 ### 8) 실패한 standby scenario만 archive하고 재실행
 
-Run the archive/rerun example only for the standby scenario that failed. Do not archive or rerun a standby scenario that already succeeded.
+Run the archive/rerun example only for the standby scenario that failed. Do not archive or rerun a standby scenario that already succeeded. Image Cache 요청을 적용한 뒤 `vn2-standby` baseline을 재시도하려면 cache 요청을 삭제하고 같은 pool을 5 → 0 → 5로 다시 recycle해야 합니다. 각 check가 0일 때만 다음 명령으로 진행합니다. `vn2-standby-cached` 재시도에서는 cache 요청을 유지합니다.
 
 ```bash
 # Example: rerun only the failed standby scenario after evidence review and any pool recovery.
-# Uncomment one block, not both.
 
 # If vn2-standby failed:
-# check_pool_state "standby healthy check" 5
+# check_pool_state "baseline retry starting healthy check" 5
+# kubectl delete -f manifests/image-cache-pod.yaml --ignore-not-found=true
+# az standby-container-group-pool update \
+#   -g "$RG" -n "$STANDBY_POOL" \
+#   --max-ready-capacity 0 \
+#   --refill-policy always
+# check_pool_state "baseline retry recycle-to-zero check" 0
+# az standby-container-group-pool update \
+#   -g "$RG" -n "$STANDBY_POOL" \
+#   --max-ready-capacity 5 \
+#   --refill-policy always
+# check_pool_state "baseline retry refill check" 5
+# check_pool_state "baseline retry pre-run healthy check" 5
+```
+
+baseline restore check가 모두 성공한 뒤 기존 baseline evidence를 archive하고 `vn2-standby`만 다시 실행합니다.
+
+```bash
 # archive_failed_attempts vn2-standby
 # ./scripts/run-benchmark.sh \
 #   --scenario vn2-standby \
@@ -323,7 +339,11 @@ Run the archive/rerun example only for the standby scenario that failed. Do not 
 #   --resource-group "$RG" \
 #   --standby-pool "$STANDBY_POOL" \
 #   --output-dir results
+```
 
+cached retry는 Image Cache 요청과 cached UVM set을 유지한 채 health만 다시 확인합니다.
+
+```bash
 # If vn2-standby-cached failed:
 # check_pool_state "cached pre-run healthy check" 5
 # archive_failed_attempts vn2-standby-cached

@@ -104,6 +104,11 @@ required_05 = [
     "check_pool_state \"standby recycle-to-zero check\" 0",
     "check_pool_state \"standby refill check\" 5",
     "check_pool_state \"cached pre-run healthy check\" 5",
+    "kubectl delete -f manifests/image-cache-pod.yaml --ignore-not-found=true",
+    "check_pool_state \"baseline retry starting healthy check\" 5",
+    "check_pool_state \"baseline retry recycle-to-zero check\" 0",
+    "check_pool_state \"baseline retry refill check\" 5",
+    "check_pool_state \"baseline retry pre-run healthy check\" 5",
     "./scripts/check-standby-pool.sh -g \"$RG\" -n \"$STANDBY_POOL\" \\",
     "--expect-running 5 --timeout-seconds 1200 --interval-seconds 15",
     "./scripts/run-benchmark.sh \\",
@@ -267,6 +272,68 @@ if re.search(
     re.S,
 ):
     raise SystemExit('docs/05-standby-cache-benchmark.md must not show an unconditional paired standby archive/rerun block')
+
+baseline_retry_match = re.search(
+    r'# If vn2-standby failed:\n(.*?)\n# If vn2-standby-cached failed:',
+    text05,
+    re.S,
+)
+if not baseline_retry_match:
+    raise SystemExit('docs/05-standby-cache-benchmark.md is missing the isolated vn2-standby retry block')
+baseline_retry = baseline_retry_match.group(1)
+baseline_restore_steps = (
+    '# check_pool_state "baseline retry starting healthy check" 5',
+    '# kubectl delete -f manifests/image-cache-pod.yaml --ignore-not-found=true',
+    '# az standby-container-group-pool update \\\n'
+    '#   -g "$RG" -n "$STANDBY_POOL" \\\n'
+    '#   --max-ready-capacity 0 \\\n'
+    '#   --refill-policy always',
+    '# check_pool_state "baseline retry recycle-to-zero check" 0',
+    '# az standby-container-group-pool update \\\n'
+    '#   -g "$RG" -n "$STANDBY_POOL" \\\n'
+    '#   --max-ready-capacity 5 \\\n'
+    '#   --refill-policy always',
+    '# check_pool_state "baseline retry refill check" 5',
+    '# check_pool_state "baseline retry pre-run healthy check" 5',
+    '# archive_failed_attempts vn2-standby',
+    '# ./scripts/run-benchmark.sh \\\n'
+    '#   --scenario vn2-standby',
+)
+previous_index = -1
+for step in baseline_restore_steps:
+    index = baseline_retry.find(step)
+    if index < 0:
+        raise SystemExit(f'docs/05-standby-cache-benchmark.md baseline retry is missing restoration step: {step}')
+    if index <= previous_index:
+        raise SystemExit(f'docs/05-standby-cache-benchmark.md baseline retry restoration is out of order: {step}')
+    previous_index = index
+
+cached_retry_match = re.search(
+    r'# If vn2-standby-cached failed:\n(.*?)\n```',
+    text05,
+    re.S,
+)
+if not cached_retry_match:
+    raise SystemExit('docs/05-standby-cache-benchmark.md is missing the isolated cached retry block')
+cached_retry = cached_retry_match.group(1)
+cached_retry_steps = (
+    '# check_pool_state "cached pre-run healthy check" 5',
+    '# archive_failed_attempts vn2-standby-cached',
+    '# ./scripts/run-benchmark.sh \\\n'
+    '#   --scenario vn2-standby-cached',
+)
+previous_index = -1
+for step in cached_retry_steps:
+    index = cached_retry.find(step)
+    if index < 0:
+        raise SystemExit(f'docs/05-standby-cache-benchmark.md cached retry is missing: {step}')
+    if index <= previous_index:
+        raise SystemExit(f'docs/05-standby-cache-benchmark.md cached retry is out of order: {step}')
+    previous_index = index
+if 'kubectl delete -f manifests/image-cache-pod.yaml' in cached_retry:
+    raise SystemExit('docs/05-standby-cache-benchmark.md cached retry must preserve the Image Cache request')
+if '--max-ready-capacity' in cached_retry:
+    raise SystemExit('docs/05-standby-cache-benchmark.md cached retry must preserve the cached pool instead of recycling it')
 
 if text04.index("--scenario aks-nap") > text04.index("--scenario vn2-ondemand"):
     raise SystemExit("docs/04-baseline-ondemand-benchmark.md must run aks-nap before vn2-ondemand")

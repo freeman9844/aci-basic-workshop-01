@@ -6,7 +6,7 @@ Korea Central에 고정 주소 체계의 custom VNet, delegated `cg` subnet, Sta
 
 ## 예상 소요 시간
 
-30분
+35분
 
 ## 시작 전 상태
 

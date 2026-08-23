@@ -6,6 +6,8 @@ KUBECTL_BIN="${KUBECTL_BIN:-kubectl}"
 HELM_BIN="${HELM_BIN:-helm}"
 POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-10}"
 DELETE_TIMEOUT_SECONDS="${DELETE_TIMEOUT_SECONDS:-1200}"
+CLUSTER_CLEANUP_TIMEOUT_SECONDS="${CLUSTER_CLEANUP_TIMEOUT_SECONDS:-30}"
+NAP_ZERO_POLL_INTERVAL_SECONDS="${NAP_ZERO_POLL_INTERVAL_SECONDS:-2}"
 
 resource_group="${RESOURCE_GROUP:-${RG:-}}"
 ondemand_namespace="${ONDEMAND_NAMESPACE:-vn2-ondemand}"
@@ -227,19 +229,67 @@ resolve_standby_pools() {
   fi
 }
 
-run_tolerant() {
+run_tolerant_bounded() {
   local description="$1"
   shift
   local output status
 
   set +e
-  output="$("$@" 2>&1)"
+  output="$(timeout --signal=KILL "${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s" "$@" 2>&1)"
   status=$?
   set -e
 
-  if [[ "$status" -ne 0 ]]; then
+  if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+    operation_failures+=("$description: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s")
+  elif [[ "$status" -ne 0 ]]; then
     operation_failures+=("$description: ${output:-command failed}")
   fi
+}
+
+observe_nodeclaims_zero() {
+  local started_at output status elapsed remaining sleep_seconds
+  started_at="$SECONDS"
+
+  while true; do
+    elapsed=$((SECONDS - started_at))
+    remaining=$((CLUSTER_CLEANUP_TIMEOUT_SECONDS - elapsed))
+    if ((remaining <= 0)); then
+      operation_failures+=("observe NodeClaim 0 for workshop-nap: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s")
+      return
+    fi
+
+    set +e
+    output="$(timeout --signal=KILL "${remaining}s" \
+      "$KUBECTL_BIN" get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name 2>&1)"
+    status=$?
+    set -e
+
+    if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
+      operation_failures+=("observe NodeClaim 0 for workshop-nap: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s")
+      return
+    fi
+    if [[ "$status" -ne 0 ]]; then
+      operation_failures+=("observe NodeClaim 0 for workshop-nap: ${output:-command failed}")
+      return
+    fi
+    if [[ -z "$output" ]]; then
+      return
+    fi
+
+    elapsed=$((SECONDS - started_at))
+    if ((elapsed >= CLUSTER_CLEANUP_TIMEOUT_SECONDS)); then
+      operation_failures+=("observe NodeClaim 0 for workshop-nap: remaining NodeClaims: $output")
+      return
+    fi
+    remaining=$((CLUSTER_CLEANUP_TIMEOUT_SECONDS - elapsed))
+    sleep_seconds="$NAP_ZERO_POLL_INTERVAL_SECONDS"
+    if ((sleep_seconds > remaining)); then
+      sleep_seconds="$remaining"
+    fi
+    if ((sleep_seconds > 0)); then
+      sleep "$sleep_seconds"
+    fi
+  done
 }
 
 prompt_for_confirmation() {
@@ -305,28 +355,20 @@ if [[ "$assume_yes" != "true" ]]; then
   prompt_for_confirmation "${standby_pools[@]}"
 fi
 
-run_tolerant "delete namespace benchmark" \
+run_tolerant_bounded "delete namespace benchmark" \
   "$KUBECTL_BIN" delete namespace benchmark --ignore-not-found=true --wait=false
-run_tolerant "delete namespace vn2-image-cache" \
+run_tolerant_bounded "delete namespace vn2-image-cache" \
   "$KUBECTL_BIN" delete namespace vn2-image-cache --ignore-not-found=true --wait=false
-run_tolerant "delete NodePool workshop-nap" \
-  "$KUBECTL_BIN" delete nodepool workshop-nap --ignore-not-found=true
-run_tolerant "delete AKSNodeClass workshop-nap" \
-  "$KUBECTL_BIN" delete aksnodeclass workshop-nap --ignore-not-found=true
+run_tolerant_bounded "delete NodePool workshop-nap" \
+  "$KUBECTL_BIN" delete nodepool workshop-nap --ignore-not-found=true --wait=false
+run_tolerant_bounded "delete AKSNodeClass workshop-nap" \
+  "$KUBECTL_BIN" delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false
 
-set +e
-nodeclaim_output="$("$KUBECTL_BIN" get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name 2>&1)"
-nodeclaim_status=$?
-set -e
-if [[ "$nodeclaim_status" -ne 0 ]]; then
-  operation_failures+=("observe NodeClaim 0 for workshop-nap: ${nodeclaim_output:-command failed}")
-elif [[ -n "$nodeclaim_output" ]]; then
-  operation_failures+=("observe NodeClaim 0 for workshop-nap: remaining NodeClaims: $nodeclaim_output")
-fi
+observe_nodeclaims_zero
 
-run_tolerant "uninstall Helm release $standby_release" \
+run_tolerant_bounded "uninstall Helm release $standby_release" \
   "$HELM_BIN" uninstall "$standby_release" --namespace "$standby_namespace" --ignore-not-found
-run_tolerant "uninstall Helm release $ondemand_release" \
+run_tolerant_bounded "uninstall Helm release $ondemand_release" \
   "$HELM_BIN" uninstall "$ondemand_release" --namespace "$ondemand_namespace" --ignore-not-found
 
 if [[ "$assume_yes" == "true" ]]; then

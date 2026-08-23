@@ -119,14 +119,13 @@ emit_status() {
 }
 
 deadline=$(($(date +%s) + timeout_seconds))
-latest_health="missing"
-latest_nodes=0
-latest_nodeclaims=0
+latest_nodes=null
+latest_nodeclaims=null
 latest_ready=false
 probe_output=""
 
 emit_timeout() {
-  emit_status "$latest_health" "$latest_nodes" "$latest_nodeclaims" false
+  emit_status "timeout" "$latest_nodes" "$latest_nodeclaims" false
   exit 3
 }
 
@@ -169,17 +168,16 @@ while true; do
   run_probe "error" "Failed to get Nodes for NodePool $node_pool" \
     get nodes -l "karpenter.sh/nodepool=$node_pool" -o json
   nodes_json="$probe_output"
+  latest_nodes="$(jq -r '.items | length' <<<"$nodes_json")"
 
   run_probe "error" "Failed to get NodeClaims for NodePool $node_pool" \
     get nodeclaims -l "karpenter.sh/nodepool=$node_pool" -o json
   nodeclaims_json="$probe_output"
+  latest_nodeclaims="$(jq -r '.items | length' <<<"$nodeclaims_json")"
 
   ready_condition="$(jq -r '
     [.status.conditions[]? | select(.type == "Ready") | .status] | last // ""
   ' <<<"$node_pool_json")"
-  latest_nodes="$(jq -r '.items | length' <<<"$nodes_json")"
-  latest_nodeclaims="$(jq -r '.items | length' <<<"$nodeclaims_json")"
-
   now="$(date +%s)"
   if ((now >= deadline)); then
     emit_timeout
@@ -190,18 +188,16 @@ while true; do
     exit 2
   fi
 
-  latest_health="ready"
   if ((latest_nodes == expect_nodes && latest_nodeclaims == expect_nodeclaims)); then
     latest_ready=true
-    emit_status "$latest_health" "$latest_nodes" "$latest_nodeclaims" "$latest_ready"
+    emit_status "ready" "$latest_nodes" "$latest_nodeclaims" "$latest_ready"
     exit 0
   fi
 
   latest_ready=false
   now="$(date +%s)"
   if ((now >= deadline)); then
-    emit_status "$latest_health" "$latest_nodes" "$latest_nodeclaims" "$latest_ready"
-    exit 3
+    emit_timeout
   fi
 
   remaining=$((deadline - now))

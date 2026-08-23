@@ -68,12 +68,12 @@ az group exists --name "$RG"
 `cleanup.sh`는 먼저 subscription ID와 resource group 존재 여부를 확인하고, RG가 이미 없으면 조기에 종료합니다. RG가 존재하면 `az standby-container-group-pool list --resource-group "$RG" --query '[].name' --output tsv`로 현재 RG 안의 standby pool 이름만 읽습니다. graceful cluster cleanup은 benchmark Pod가 든 `benchmark` namespace와 `vn2-image-cache` namespace를 먼저 삭제하고, 아래 순서로 NAP 리소스 삭제와 NodeClaim 0 관찰을 시도한 뒤 Helm release를 제거합니다.
 
 ```bash
-kubectl delete nodepool workshop-nap --ignore-not-found=true
-kubectl delete aksnodeclass workshop-nap --ignore-not-found=true
+kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false
+kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false
 kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name
 ```
 
-마지막 명령의 빈 출력이 NodeClaim 0 evidence입니다. NodeClaim이 남아 있거나 cluster가 unreachable이면 경고를 남기되, `vn2-standby` / `vn2-ondemand` Helm release, 그 RG 안의 standby pool, 마지막으로 RG 자체 삭제를 계속합니다.
+NAP delete는 `--wait=false`로 반환을 기다리지 않으며, NodeClaim 0 관찰을 포함한 각 cluster 명령은 `CLUSTER_CLEANUP_TIMEOUT_SECONDS` 안에서만 실행됩니다. 마지막 명령의 빈 출력이 NodeClaim 0 evidence입니다. NodeClaim이 남아 있거나 timeout이 발생하거나 cluster가 unreachable이면 경고를 남기되, `vn2-standby` / `vn2-ondemand` Helm release, 그 RG 안의 standby pool, 마지막으로 RG 자체 삭제를 계속합니다.
 
 fresh Cloud Shell session, authorized IP drift, 또는 missing kubeconfig 때문에 `kubectl`/`helm` 이 cluster unreachable warning 을 내더라도 billing-critical RG deletion 은 계속 진행되어야 합니다. 이 경우 `WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.` 또는 `Cleanup completed with warnings.` 같은 경고는 정상적인 evidence 이며, 숨기지 말고 CLI 출력 그대로 보존하십시오.
 

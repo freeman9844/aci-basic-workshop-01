@@ -107,8 +107,8 @@ if sum(module_rows.values()) != 180:
     raise SystemExit(f"README module duration total must be 180, found {sum(module_rows.values())}")
 
 expected_doc_durations = {
-    "01": 15,
-    "02": 30,
+    "01": 20,
+    "02": 35,
     "03": 20,
     "04": 45,
     "05": 30,
@@ -135,8 +135,18 @@ for module, path in module_files.items():
     for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 이전/다음"):
         if heading not in text:
             raise SystemExit(f"{path.name} is missing required section: {heading}")
-    if f"{expected_doc_durations[module]}분" not in text:
-        raise SystemExit(f"{path.name} is missing its duration: {expected_doc_durations[module]}분")
+    duration_match = re.search(r"^## 예상 소요 시간\s*\n\s*(\d+)분\s*$", text, re.M)
+    if not duration_match:
+        raise SystemExit(f"{path.name} is missing an exact duration under 예상 소요 시간")
+    duration = int(duration_match.group(1))
+    if duration != expected_doc_durations[module]:
+        raise SystemExit(
+            f"{path.name} duration mismatch: expected {expected_doc_durations[module]}분, found {duration}분"
+        )
+    if duration != module_rows[module]:
+        raise SystemExit(
+            f"{path.name} duration {duration}분 disagrees with README {module_rows[module]}분"
+        )
     for marker in banned_markers:
         if marker.lower() in text.lower():
             raise SystemExit(f"{path.name} contains incomplete marker: {marker}")
@@ -148,6 +158,10 @@ for module, path in module_files.items():
         raise SystemExit(f"{path.name} is missing previous link to {previous_target}")
     if f"]({next_target})" not in text:
         raise SystemExit(f"{path.name} is missing next link to {next_target}")
+
+participant_total = module_rows["00"] + sum(expected_doc_durations.values())
+if participant_total != 180:
+    raise SystemExit(f"Cross-file participant duration total must be 180, found {participant_total}")
 
 if "중간에 shell/session을 바꾸지 않았다." in readme_text:
     raise SystemExit("README must not require a single uninterrupted shell session anymore")

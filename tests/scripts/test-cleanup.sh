@@ -22,9 +22,50 @@ case "${KUBECTL_MODE:-success}" in
     case "$*" in
       "delete namespace benchmark --ignore-not-found=true --wait=false"|\
       "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
-      "delete nodepool workshop-nap --ignore-not-found=true"|\
-      "delete aksnodeclass workshop-nap --ignore-not-found=true"|\
+      "delete nodepool workshop-nap --ignore-not-found=true --wait=false"|\
+      "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false"|\
       "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
+        exit 0
+        ;;
+    esac
+    ;;
+  hang-nodepool)
+    case "$*" in
+      "delete nodepool workshop-nap --ignore-not-found=true"|\
+      "delete nodepool workshop-nap --ignore-not-found=true --wait=false")
+        sleep 30
+        ;;
+      "delete namespace benchmark --ignore-not-found=true --wait=false"|\
+      "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
+      "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false"|\
+      "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
+        exit 0
+        ;;
+    esac
+    ;;
+  hang-nodeclaims)
+    case "$*" in
+      "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
+        sleep 30
+        ;;
+      "delete namespace benchmark --ignore-not-found=true --wait=false"|\
+      "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
+      "delete nodepool workshop-nap --ignore-not-found=true --wait=false"|\
+      "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false")
+        exit 0
+        ;;
+    esac
+    ;;
+  nodeclaims-remain)
+    case "$*" in
+      "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
+        printf 'nodeclaim.karpenter.sh/workshop-nap-test\n'
+        exit 0
+        ;;
+      "delete namespace benchmark --ignore-not-found=true --wait=false"|\
+      "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
+      "delete nodepool workshop-nap --ignore-not-found=true --wait=false"|\
+      "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false")
         exit 0
         ;;
     esac
@@ -202,8 +243,8 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
     "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
@@ -215,6 +256,81 @@ expected = [
 if lines != expected:
     raise SystemExit(f"unexpected command order: {lines!r}")
 PY
+
+rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
+set +e
+hanging_kubectl_output="$(timeout 5s env \
+  TEST_LOG_DIR="$TMP/logs" \
+  AZ_STATE_DIR="$TMP/state" \
+  AZ_BIN="$TMP/bin/az" \
+  KUBECTL_BIN="$TMP/bin/kubectl" \
+  HELM_BIN="$TMP/bin/helm" \
+  AZ_MODE=success \
+  KUBECTL_MODE=hang-nodepool \
+  CLUSTER_CLEANUP_TIMEOUT_SECONDS=1 \
+  NAP_ZERO_POLL_INTERVAL_SECONDS=0 \
+  "$ROOT/scripts/cleanup.sh" \
+  --resource-group rg-test \
+  --ondemand-namespace vn2-ondemand \
+  --standby-namespace vn2-standby \
+  --yes 2>&1)"
+hanging_kubectl_status=$?
+set -e
+
+[[ "$hanging_kubectl_status" -eq 0 ]]
+grep -F 'delete NodePool workshop-nap:' <<<"$hanging_kubectl_output" >/dev/null
+grep -F 'Cleanup completed with warnings.' <<<"$hanging_kubectl_output" >/dev/null
+grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
+
+rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
+set +e
+hanging_nodeclaims_output="$(timeout 5s env \
+  TEST_LOG_DIR="$TMP/logs" \
+  AZ_STATE_DIR="$TMP/state" \
+  AZ_BIN="$TMP/bin/az" \
+  KUBECTL_BIN="$TMP/bin/kubectl" \
+  HELM_BIN="$TMP/bin/helm" \
+  AZ_MODE=success \
+  KUBECTL_MODE=hang-nodeclaims \
+  CLUSTER_CLEANUP_TIMEOUT_SECONDS=1 \
+  NAP_ZERO_POLL_INTERVAL_SECONDS=0 \
+  "$ROOT/scripts/cleanup.sh" \
+  --resource-group rg-test \
+  --ondemand-namespace vn2-ondemand \
+  --standby-namespace vn2-standby \
+  --yes 2>&1)"
+hanging_nodeclaims_status=$?
+set -e
+
+[[ "$hanging_nodeclaims_status" -eq 0 ]]
+grep -F 'observe NodeClaim 0 for workshop-nap:' <<<"$hanging_nodeclaims_output" >/dev/null
+grep -F 'Cleanup completed with warnings.' <<<"$hanging_nodeclaims_output" >/dev/null
+grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
+
+rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
+set +e
+remaining_nodeclaims_output="$(timeout 5s env \
+  TEST_LOG_DIR="$TMP/logs" \
+  AZ_STATE_DIR="$TMP/state" \
+  AZ_BIN="$TMP/bin/az" \
+  KUBECTL_BIN="$TMP/bin/kubectl" \
+  HELM_BIN="$TMP/bin/helm" \
+  AZ_MODE=success \
+  KUBECTL_MODE=nodeclaims-remain \
+  CLUSTER_CLEANUP_TIMEOUT_SECONDS=1 \
+  NAP_ZERO_POLL_INTERVAL_SECONDS=30 \
+  "$ROOT/scripts/cleanup.sh" \
+  --resource-group rg-test \
+  --ondemand-namespace vn2-ondemand \
+  --standby-namespace vn2-standby \
+  --yes 2>&1)"
+remaining_nodeclaims_status=$?
+set -e
+
+[[ "$remaining_nodeclaims_status" -eq 0 ]]
+grep -F 'observe NodeClaim 0 for workshop-nap:' <<<"$remaining_nodeclaims_output" >/dev/null
+grep -F 'Cleanup completed with warnings.' <<<"$remaining_nodeclaims_output" >/dev/null
+grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -246,8 +362,8 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
     "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
@@ -286,8 +402,8 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
     "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
@@ -423,8 +539,8 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
     "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
@@ -465,8 +581,8 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     "kubectl delete namespace benchmark --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true",
+    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
+    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
     "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",

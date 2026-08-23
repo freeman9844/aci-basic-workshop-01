@@ -114,7 +114,26 @@ elapsed_ms = float(sys.argv[1])
 if elapsed_ms > 2500:
     raise SystemExit(f"probe exceeded timeout contract: {elapsed_ms:.3f}ms")
 PY
-  jq -e '.node_pool == "workshop-nap" and .ready == false' <<<"$output"
+  case "$mode" in
+    slow-nodepool|slow-nodes)
+      jq -e '
+        .health == "timeout"
+        and .node_pool == "workshop-nap"
+        and .nodes == null
+        and .nodeclaims == null
+        and .ready == false
+      ' <<<"$output"
+      ;;
+    slow-nodeclaims)
+      jq -e '
+        .health == "timeout"
+        and .node_pool == "workshop-nap"
+        and .nodes == 0
+        and .nodeclaims == null
+        and .ready == false
+      ' <<<"$output"
+      ;;
+  esac
 }
 
 assert_probe_timeout slow-nodepool
@@ -140,7 +159,7 @@ status=$?
 set -e
 [[ "$status" -eq 3 ]]
 jq -e '
-  .health == "ready"
+  .health == "timeout"
   and .nodes == 1
   and .nodeclaims == 1
   and .ready == false

@@ -1,30 +1,29 @@
-# Module 04. 기준선과 OnDemand 측정 실행
+# Module 04. AKS NAP와 VN2 OnDemand 측정 실행
 
 ## 목표
 
-같은 benchmark Pod template로 regular AKS 경로와 `VN2 OnDemand` 경로를 각각 3회씩 실행해 `aks` 와 `vn2-ondemand` raw evidence를 남깁니다. run별 JSON과 diagnostics를 그대로 보존해 첫 run의 cold image 차이, timeout, failure를 숨기지 않고 다음 분석 모듈에서 그대로 해석할 수 있게 합니다.
+같은 benchmark Pod template로 `AKS NAP`와 `VN2 OnDemand`를 각각 5 Pods × 3회 실행합니다. `aks-nap`은 각 run의 NAP node/NodeClaim 0 → 1 → 0 lifecycle을 증명하고, `vn2-ondemand`는 net-new ACI 실행 경로를 측정합니다. 실패나 timeout이 발생해도 run별 JSON과 diagnostics를 보존합니다.
 
 ## 예상 소요 시간
 
-25분
+45분
 
 ## 시작 전 상태
 
-- Module 03을 완료해 `benchmark-path=aks`, `benchmark-path=ondemand`, `benchmark-path=standby` 가 모두 Ready 다.
-- Module 02와 Module 03에서 저장한 `results/workshop.env` 가 존재하며, fresh Cloud Shell 에서도 다시 source 할 수 있다.
-- `~/aci-vn2-performance-workshop` 저장소 루트에서 스크립트를 실행할 수 있다.
-- `results/` 아래의 이전 raw evidence를 지우지 않고 새 run을 이어서 보관할 준비가 되었다.
+- Module 02의 `workshop-nap` NodePool이 Ready이고 NAP node와 NodeClaim이 모두 0개다.
+- Module 03의 `benchmark-path=ondemand`와 `benchmark-path=standby` virtual node가 Ready다.
+- `results/workshop.env`를 fresh Cloud Shell에서도 다시 source할 수 있다.
+- 이전 실패 evidence를 삭제하지 않고 `results/failed-attempts/`로 옮긴 뒤 재시도할 준비가 되었다.
 
 ## 진행 순서
 
-1. 현재 shell 세션의 연속성을 확인하고, interactive-safe helper를 준비합니다.
-2. `aks` 시나리오를 `--runs 3` 으로 실행하고 exit code를 즉시 기록합니다.
-3. `aks` raw 파일과 diagnostics 경로를 확인하고 `jq` 로 per-Pod / batch timing을 빠르게 읽습니다.
-4. `vn2-ondemand` 시나리오를 `--runs 3` 으로 실행하고 exit code를 즉시 기록합니다.
-5. `vn2-ondemand` raw 파일과 diagnostics 경로를 확인하고 같은 `jq` 질의를 다시 사용합니다.
-6. retry 전에 고정 결과 경로를 archive 하는 절차와 첫 run의 node image cache 해석 원칙을 확인합니다.
+1. workshop state와 interactive-safe helper를 복구합니다.
+2. `workshop-nap`의 node/NodeClaim이 0인지 명시적으로 확인합니다.
+3. `aks-nap`을 3회 실행하고 run별 0 → 1 → 0 evidence를 확인합니다.
+4. `vn2-ondemand`를 3회 실행하고 raw JSON과 diagnostics를 확인합니다.
+5. 실패한 시나리오만 archive한 뒤 복구하고 다시 실행합니다.
 
-### 1) shell 연속성 확인과 helper 준비
+### 1) workshop state와 helper 준비
 
 ```bash
 cd ~/aci-vn2-performance-workshop
@@ -80,74 +79,126 @@ archive_failed_attempts() {
   printf 'Archived prior %s artifacts to %s\n' "$scenario" "$archive_dir"
 }
 
+check_nap_state() {
+  local label="$1"
+
+  run_and_capture_rc "$label" \
+    ./scripts/check-nap-capacity.sh \
+      --name workshop-nap \
+      --expect-nodes 0 \
+      --expect-nodeclaims 0 \
+      --timeout-seconds 1200 \
+      --interval-seconds 15
+  NAP_CHECK_RC=$?
+
+  case "$NAP_CHECK_RC" in
+    0)
+      printf '%s succeeded.\n' "$label"
+      ;;
+    2)
+      printf 'RC=2 means the NAP NodePool is missing, unreadable, or not Ready.\n' >&2
+      printf 'Keep the JSON output as evidence, recover Module 02, and rerun the same check.\n' >&2
+      ;;
+    3)
+      printf 'RC=3 means NAP nodes or NodeClaims did not reach zero before timeout.\n' >&2
+      printf 'Do not start another run; inspect remaining workloads and Karpenter state first.\n' >&2
+      ;;
+    *)
+      printf '%s returned unexpected RC=%s\n' "$label" "$NAP_CHECK_RC" >&2
+      ;;
+  esac
+
+  return "$NAP_CHECK_RC"
+}
+
 mkdir -p results
 require_workshop_vars
 ```
 
-여기서는 persistent errexit 설정을 켜지 않습니다. `$RG` 또는 `$STANDBY_POOL` 이 비어 있어도 현재 shell 이 닫히지 않게 해야 `results/workshop.env` 복구나 Module 02/03 recovery 절차를 곧바로 이어갈 수 있습니다.
+persistent errexit 설정은 사용하지 않습니다. checker나 benchmark의 nonzero exit code를 기록하고 같은 shell에서 evidence 확인과 복구를 계속해야 합니다.
 
-### 2) regular AKS 기준선 3회 실행
+### 2) NAP NodePool과 zero-capacity precheck
 
 ```bash
-run_and_capture_rc "aks benchmark" \
+check_nap_state "NAP zero-capacity precheck"
+```
+
+helper를 복구하지 않은 shell에서는 다음 표준 명령을 직접 실행합니다.
+
+```bash
+./scripts/check-nap-capacity.sh \
+  --name workshop-nap \
+  --expect-nodes 0 \
+  --expect-nodeclaims 0 \
+  --timeout-seconds 1200 \
+  --interval-seconds 15
+```
+
+exit code가 0일 때만 benchmark를 시작합니다. RC=2이면 NodePool 상태를 복구하고, RC=3이면 남은 node/NodeClaim과 workload를 조사합니다. zero state가 확인되지 않은 상태에서 다음 run을 시작하지 않습니다.
+
+### 3) `aks-nap` 3회 실행
+
+```bash
+run_and_capture_rc "aks-nap benchmark" \
   ./scripts/run-benchmark.sh \
-    --scenario aks \
+    --scenario aks-nap \
     --runs 3 \
     --output-dir results
-AKS_RC=$?
+NAP_RC=$?
 
-case "$AKS_RC" in
+case "$NAP_RC" in
   0)
-    printf 'aks benchmark completed all 3 runs.\n'
+    printf 'aks-nap benchmark completed all 3 runs.\n'
     ;;
   2)
     printf 'RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.\n' >&2
+    printf 'RC=2 can also mean the internal NAP pre-run or post-run check reported a missing or degraded NodePool, so the current run may not have new raw JSON.\n' >&2
     printf 'The runner stops remaining runs after the first failed sample.\n' >&2
-    printf 'Inspect results/raw and results/diagnostics, archive the fixed paths below, and then rerun the standard command.\n' >&2
+    printf 'Inspect existing evidence and run check_nap_state "NAP zero-capacity recovery check" before retrying only aks-nap.\n' >&2
+    ;;
+  3)
+    printf 'RC=3 means the internal NAP pre-run or post-run zero-capacity check timed out.\n' >&2
+    printf 'Do not continue; preserve the JSON check result and recover node/NodeClaim zero state first.\n' >&2
+    ;;
+  124)
+    printf 'RC=124 means the overall scenario deadline expired.\n' >&2
+    printf 'Preserve all completed raw and diagnostics paths, recover zero state, then retry only aks-nap.\n' >&2
     ;;
   *)
-    printf 'Unexpected aks benchmark failure RC=%s\n' "$AKS_RC" >&2
+    printf 'Unexpected aks-nap benchmark failure RC=%s\n' "$NAP_RC" >&2
     ;;
 esac
 ```
 
-이 명령은 `benchmark-path=aks` 라벨이 붙은 일반 AKS VM 노드에서 5개 Pod × 3회를 실행합니다. `run-benchmark.sh` 의 exit code `2` 는 evidence/recovery 상태입니다. 실패를 성공처럼 취급하지 말고, raw JSON과 diagnostics를 본 뒤 다시 판단합니다.
+runner는 세 run 각각에서 Pod 생성 전에 `nap-precheck.json`으로 0/0을 확인합니다. Pod가 Ready인 동안 `nap-nodeclaims.yaml`, `kubectl-nodes.json`, `nap-nodepool.yaml`, `nap-events.txt`를 수집하고, namespace 삭제 뒤 `nap-postcheck.json`으로 다시 0/0을 확인합니다. post-check가 실패하면 다음 run을 시작하지 않습니다.
 
-### 3) `aks` raw evidence와 diagnostics 확인
+### 4) run별 NAP 0 → 1 → 0 evidence 확인
 
 ```bash
-find results/raw -maxdepth 1 -type f -name 'aks-run-*.json' | sort
-jq -r '.pods[] | [.name, .terminal_state, .create_to_ready_ms, .node_name] | @tsv' results/raw/aks-run-1.json
-jq '{scenario, run, batch: {first_ready_ms: .batch.first_ready_ms, all_ready_ms: .batch.all_ready_ms}}' results/raw/aks-run-1.json
-find results/diagnostics -maxdepth 2 -type f -path '*/aks-run-*/*' | sort
+find results/raw -maxdepth 1 -type f -name 'aks-nap-run-*.json' | sort
+jq -r '.pods[] | [.name, .terminal_state, .create_to_ready_ms, .node_name] | @tsv' results/raw/aks-nap-run-1.json
+jq '{scenario, run, batch: {first_ready_ms: .batch.first_ready_ms, all_ready_ms: .batch.all_ready_ms}}' results/raw/aks-nap-run-1.json
+
+for run in 1 2 3; do
+  evidence="results/diagnostics/aks-nap-run-${run}"
+  jq '{nodes, nodeclaims, ready}' "$evidence/nap-precheck.json"
+  sed -n '1,200p' "$evidence/nap-nodeclaims.yaml"
+  sed -n '1,200p' "$evidence/kubectl-nodes.json"
+  jq '{nodes, nodeclaims, ready}' "$evidence/nap-postcheck.json"
+done
+
+find results/diagnostics -maxdepth 2 -type f -path '*/aks-nap-run-*/*' | sort
 ```
 
-예상 출력 구조는 다음과 비슷합니다.
+성공한 각 run에서 다음 연결을 확인합니다.
 
-```text
-results/raw/aks-run-1.json
-results/raw/aks-run-2.json
-results/raw/aks-run-3.json
-aks-run-1-pod-1	ready	1234.0	aks-nodepool1-...
-aks-run-1-pod-2	ready	1275.0	aks-nodepool1-...
-...
-{
-  "scenario": "aks",
-  "run": 1,
-  "batch": {
-    "first_ready_ms": 1234.0,
-    "all_ready_ms": 1680.0
-  }
-}
-results/diagnostics/aks-run-1/az-container-list.json
-results/diagnostics/aks-run-1/kubectl-describe-pods.txt
-results/diagnostics/aks-run-1/kubectl-events.txt
-results/diagnostics/aks-run-1/kubectl-nodes.json
-```
+- 시작 0: `nap-precheck.json`의 `nodes: 0`, `nodeclaims: 0`, `ready: true`
+- scale-out 1: `nap-nodeclaims.yaml`과 `kubectl-nodes.json`에 `workshop-nap` NodeClaim/node가 하나 있으며 raw Pod의 `node_name`이 그 node를 가리킴
+- 종료 0: `nap-postcheck.json`의 `nodes: 0`, `nodeclaims: 0`, `ready: true`
 
-`results/diagnostics/aks-run-1/` 아래의 `kubectl-describe-pods.txt`, `kubectl-events.txt`, `kubectl-nodes.json` 은 timeout/failure가 생겨도 지우지 않습니다. `az-container-list.json` 도 항상 생성되지만, `aks` 와 `vn2-ondemand` run에서는 `--resource-group` 을 전달하지 않았으므로 `skipped --resource-group not provided` 기록이 들어가는 것이 정상입니다.
+예상 Pod 이름은 `aks-nap-run-1-pod-1`, `aks-nap-run-1-pod-2`처럼 새 scenario ID를 포함합니다. `results/diagnostics/aks-nap-run-1/`에는 위 NAP 파일 외에도 `kubectl-describe-pods.txt`, `kubectl-events.txt`, `kubectl-nodes.json`, `az-container-list.json`이 남습니다. `az-container-list.json`의 `skipped --resource-group not provided`는 AKS NAP run에서 정상입니다.
 
-### 4) `VN2 OnDemand` 3회 실행
+### 5) `VN2 OnDemand` 3회 실행
 
 ```bash
 run_and_capture_rc "vn2-ondemand benchmark" \
@@ -164,7 +215,11 @@ case "$ONDEMAND_RC" in
   2)
     printf 'RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.\n' >&2
     printf 'The runner stops remaining runs after the first failed sample.\n' >&2
-    printf 'Inspect the evidence, archive the fixed paths below, and then rerun the standard command.\n' >&2
+    printf 'Inspect existing evidence, archive fixed paths, and retry only vn2-ondemand.\n' >&2
+    ;;
+  124)
+    printf 'RC=124 means the overall scenario deadline expired.\n' >&2
+    printf 'Preserve completed evidence before retrying only vn2-ondemand.\n' >&2
     ;;
   *)
     printf 'Unexpected vn2-ondemand benchmark failure RC=%s\n' "$ONDEMAND_RC" >&2
@@ -172,9 +227,7 @@ case "$ONDEMAND_RC" in
 esac
 ```
 
-이 경로는 standby ready capacity 없이 ACI를 net-new 로 준비하는 흐름을 포함합니다. 따라서 admission controller, ACI provisioning, image pull이 모두 측정값에 반영됩니다.
-
-### 5) `vn2-ondemand` raw evidence와 diagnostics 확인
+이 경로는 standby ready capacity 없이 ACI container group을 net-new로 준비합니다.
 
 ```bash
 find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort
@@ -183,22 +236,21 @@ jq '{scenario, run, batch: {first_ready_ms: .batch.first_ready_ms, all_ready_ms:
 find results/diagnostics -maxdepth 2 -type f -path '*/vn2-ondemand-run-*/*' | sort
 ```
 
-여기서도 raw JSON 하나가 run 하나에 대응합니다. `results/diagnostics/vn2-ondemand-run-1/` 아래에는 `kubectl-describe-pods.txt`, `kubectl-events.txt`, `kubectl-nodes.json`, `az-container-list.json` 이 생성되어 실패 원인과 namespace 정리 상태를 나중에 다시 확인할 수 있습니다.
+`results/diagnostics/vn2-ondemand-run-1/`의 `kubectl-describe-pods.txt`, `kubectl-events.txt`, `kubectl-nodes.json`, `az-container-list.json`도 삭제하지 않습니다.
 
-### 6) retry 전 archive와 첫 run의 node image cache 해석
+### 6) 실패한 시나리오만 archive하고 재실행
 
-같은 시나리오를 다시 실행하면 `results/raw/<scenario>-run-*` 와 `results/diagnostics/<scenario>-run-*` 고정 경로가 덮어써집니다. 따라서 retry 전에 반드시 기존 evidence를 archive 해야 합니다.
-
-Run the archive/rerun example only for the scenario that failed. Do not archive or rerun a scenario that already succeeded.
+같은 scenario를 재실행하면 고정 raw/diagnostics 경로가 덮어써집니다. Run the archive/rerun example only for the scenario that failed. Do not archive or rerun a scenario that already succeeded.
 
 ```bash
 # Example: rerun only the failed scenario after reviewing evidence.
 # Uncomment one block, not both.
 
-# If aks failed:
-# archive_failed_attempts aks
+# If aks-nap failed:
+# check_nap_state "NAP zero-capacity recovery check"
+# archive_failed_attempts aks-nap
 # ./scripts/run-benchmark.sh \
-#   --scenario aks \
+#   --scenario aks-nap \
 #   --runs 3 \
 #   --output-dir results
 
@@ -210,28 +262,23 @@ Run the archive/rerun example only for the scenario that failed. Do not archive 
 #   --output-dir results
 ```
 
-regular AKS 노드는 첫 run 에서만 이미지가 cold 상태일 수 있고, 두 번째 이후 run은 같은 VM의 node image cache 덕분에 더 빨라질 수 있습니다. 이 워크숍은 그 차이를 평균값으로 덮지 않기 위해 run별 JSON 을 그대로 보관합니다.
-
-즉, 첫 run 이 느리더라도 outlier처럼 삭제하지 않고 `results/raw/aks-run-1.json` 같은 개별 파일로 남겨 두어야 합니다. 그래야 Module 06에서 “첫 run이 왜 달랐는가”를 batch timing과 per-Pod timing 모두로 설명할 수 있습니다.
-
 ## 완료 체크포인트
 
-- `./scripts/run-benchmark.sh --scenario aks --runs 3 --output-dir results` 와 `./scripts/run-benchmark.sh --scenario vn2-ondemand --runs 3 --output-dir results` 의 exit code를 각각 기록했다.
+- 시작 전 `workshop-nap` NodePool Ready와 node/NodeClaim 0/0을 확인했다.
+- `aks-nap`와 `vn2-ondemand` 명령을 각각 `--runs 3`으로 실행하고 exit code를 기록했다.
 - 두 시나리오 명령이 모두 0으로 끝났을 때만 정확히 6개의 raw 파일을 기대합니다.
-- `find results/raw -maxdepth 1 -type f -name 'aks-run-*.json' | sort` 와 `find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort` 로 생성된 raw 파일 수를 확인했다.
-- `jq -r '.pods[] | [.name, .terminal_state, .create_to_ready_ms, .node_name] | @tsv' ...` 와 `jq '{scenario, run, batch: {first_ready_ms: .batch.first_ready_ms, all_ready_ms: .batch.all_ready_ms}}' ...` 로 per-Pod / batch timing을 확인했다.
-- `results/diagnostics/aks-run-1/` 와 `results/diagnostics/vn2-ondemand-run-1/` 아래의 `kubectl-describe-pods.txt`, `kubectl-events.txt`, `kubectl-nodes.json`, `az-container-list.json` 경로를 확인했다.
-- retry 전에 `results/failed-attempts/` 로 기존 evidence를 archive 하는 절차를 준비했다.
-- 첫 run의 node image cache 차이 때문에 run별 JSON을 그대로 유지해야 한다는 점을 이해했다.
-- 다음 모듈에서 같은 `$RG` 와 `$STANDBY_POOL` 을 그대로 재사용할 준비가 되었다.
+- `results/raw/aks-nap-run-{1,2,3}.json`과 `results/raw/vn2-ondemand-run-{1,2,3}.json`을 확인했다.
+- 각 NAP run에서 precheck 0, active NodeClaim/node 1, postcheck 0 evidence를 확인했다.
+- 실패/timeout evidence를 보존하고 실패한 scenario만 archive/retry한다.
 
 ## 문제 해결
 
-| 증상 | 원인 후보 | 확인 명령 | 조치 |
-| --- | --- | --- | --- |
-| `aks` 또는 `vn2-ondemand` 가 `RC=2` 로 끝난다 | benchmark sample timeout/failure가 raw JSON 기록 뒤에 발생함 | `jq '{scenario, run, batch, pods: [.pods[] | {name, terminal_state, create_to_ready_ms, node_name}]}' results/raw/aks-run-1.json`, `sed -n '1,160p' results/diagnostics/aks-run-1/kubectl-events.txt`, `sed -n '1,160p' results/diagnostics/vn2-ondemand-run-1/kubectl-describe-pods.txt` | shell을 닫지 말고 evidence를 본다. runner가 남은 run을 중단했으므로 먼저 `archive_failed_attempts <scenario>` 를 실행한 뒤 실패한 시나리오만 같은 표준 명령으로 다시 실행 |
-| raw 파일 수가 6개보다 적다 | 어느 시나리오에서든 첫 failed sample 이후 남은 run이 중단됨 | `find results/raw -maxdepth 1 -type f -name 'aks-run-*.json' | sort`, `find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort` | 비정상이 아니다. raw/diagnostics를 보존하고, retry 전에 archive 한 뒤 필요한 시나리오만 다시 실행 |
-| diagnostics 파일이 비어 보인다 | namespace가 빠르게 정리되었거나 `az-container-list.json` 이 skip record일 수 있음 | `find results/diagnostics -maxdepth 2 -type f -path '*/aks-run-*/*' | sort`, `cat results/diagnostics/aks-run-1/az-container-list.json`, `cat results/diagnostics/vn2-ondemand-run-1/az-container-list.json` | 파일이 존재하면 우선 evidence는 확보된 것임. 삭제하지 말고 다음 모듈로 진행 |
+| 증상 | 확인 | 조치 |
+| --- | --- | --- |
+| NAP precheck가 RC=2다 | `kubectl get nodepool workshop-nap -o yaml`, `cat results/diagnostics/aks-nap-run-1/nap-precheck.json` | NodePool Ready와 AKS context를 복구한 뒤 같은 zero-state check를 다시 실행 |
+| NAP pre/post check가 RC=3 또는 scenario가 RC=124다 | `kubectl get nodes -l karpenter.sh/nodepool=workshop-nap`, `kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap`, `cat results/diagnostics/aks-nap-run-1/nap-postcheck.json` | workload와 namespace 정리를 확인하고 0/0이 될 때까지 기다린다. zero state 전에는 다음 run을 시작하지 않음 |
+| benchmark가 RC=2다 | `jq '{scenario, run, batch, pods: [.pods[] | {name, terminal_state, create_to_ready_ms, node_name}]}' results/raw/aks-nap-run-1.json`, `sed -n '1,160p' results/diagnostics/aks-nap-run-1/kubectl-events.txt` | raw/diagnostics를 보존하고 실패한 scenario만 archive한 뒤 재실행 |
+| raw 파일이 6개보다 적다 | `find results/raw -maxdepth 1 -type f -name 'aks-nap-run-*.json' \| sort`, `find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' \| sort` | 첫 failure 뒤 남은 run이 중단된 정상 fail-fast 결과일 수 있다. evidence 확인 후 해당 scenario만 복구 |
 
 ## 이전/다음
 

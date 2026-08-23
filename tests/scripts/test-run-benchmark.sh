@@ -334,6 +334,62 @@ run_with_fakes \
 
 grep -F 'benchmark-path: standby' "$TMP/render/vn2-standby-run-1.yaml" >/dev/null
 
+reset_behavior
+reset_logs
+run_with_fakes \
+  --scenario aks-nap \
+  --runs 3 \
+  --output-dir "$TMP/documented-runs"
+run_with_fakes \
+  --scenario vn2-ondemand \
+  --runs 3 \
+  --output-dir "$TMP/documented-runs"
+run_with_fakes \
+  --scenario vn2-standby \
+  --runs 3 \
+  --resource-group rg-test \
+  --standby-pool pool-test \
+  --output-dir "$TMP/documented-runs"
+run_with_fakes \
+  --scenario vn2-standby-cached \
+  --runs 3 \
+  --resource-group rg-test \
+  --standby-pool pool-test \
+  --output-dir "$TMP/documented-runs"
+
+python3 - "$TMP/documented-runs/raw" <<'PY'
+import pathlib
+import sys
+
+raw_dir = pathlib.Path(sys.argv[1])
+actual = sorted(path.name for path in raw_dir.glob("*.json"))
+expected = [
+    f"{scenario}-run-{run}.json"
+    for scenario in (
+        "aks-nap",
+        "vn2-ondemand",
+        "vn2-standby",
+        "vn2-standby-cached",
+    )
+    for run in range(1, 4)
+]
+if actual != sorted(expected):
+    raise SystemExit(f"expected the 12 documented raw artifacts, got {actual}")
+PY
+
+test "$(wc -l <"$TMP/logs/nap.log")" -eq 6
+test "$(wc -l <"$TMP/logs/standby.log")" -eq 12
+for run in 1 2 3; do
+  assert_json_file "$TMP/documented-runs/diagnostics/aks-nap-run-$run/nap-precheck.json"
+  assert_json_file "$TMP/documented-runs/diagnostics/aks-nap-run-$run/nap-postcheck.json"
+  assert_json_file "$TMP/documented-runs/diagnostics/vn2-standby-run-$run/standby-precheck.json"
+  assert_json_file "$TMP/documented-runs/diagnostics/vn2-standby-run-$run/standby-postcheck.json"
+  assert_json_file "$TMP/documented-runs/diagnostics/vn2-standby-cached-run-$run/standby-precheck.json"
+  assert_json_file "$TMP/documented-runs/diagnostics/vn2-standby-cached-run-$run/standby-postcheck.json"
+done
+
+reset_behavior
+reset_logs
 set +e
 output="$("$ROOT/scripts/run-benchmark.sh" \
   --scenario nope \

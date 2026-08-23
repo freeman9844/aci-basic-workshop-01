@@ -32,44 +32,59 @@ required_04 = [
     "require_workshop_vars() {",
     "run_and_capture_rc() {",
     "archive_failed_attempts() {",
+    "check_nap_state() {",
     "if [[ -z \"${RG:-}\" ]]; then",
     "if [[ -z \"${STANDBY_POOL:-}\" ]]; then",
+    "./scripts/check-nap-capacity.sh \\",
+    "--name workshop-nap",
+    "--expect-nodes 0",
+    "--expect-nodeclaims 0",
+    "--timeout-seconds 1200",
+    "--interval-seconds 15",
+    "check_nap_state \"NAP zero-capacity precheck\"",
     "./scripts/run-benchmark.sh \\",
-    "--scenario aks",
+    "--scenario aks-nap",
     "--scenario vn2-ondemand",
     "--runs 3",
     "--output-dir results",
-    "find results/raw -maxdepth 1 -type f -name 'aks-run-*.json' | sort",
+    "find results/raw -maxdepth 1 -type f -name 'aks-nap-run-*.json' | sort",
     "find results/raw -maxdepth 1 -type f -name 'vn2-ondemand-run-*.json' | sort",
     "jq -r '.pods[] | [.name, .terminal_state, .create_to_ready_ms, .node_name] | @tsv'",
     "jq '{scenario, run, batch: {first_ready_ms: .batch.first_ready_ms, all_ready_ms: .batch.all_ready_ms}}'",
-    "aks-run-1-pod-1",
-    "aks-run-1-pod-2",
-    "첫 run",
-    "node image cache",
+    "aks-nap-run-1-pod-1",
+    "aks-nap-run-1-pod-2",
+    "NAP node/NodeClaim 0 → 1 → 0",
     "run별 JSON",
-    "results/diagnostics/aks-run-1/",
+    "results/diagnostics/aks-nap-run-1/",
     "results/diagnostics/vn2-ondemand-run-1/",
+    "nap-precheck.json",
+    "nap-postcheck.json",
+    "nap-nodepool.yaml",
+    "nap-nodeclaims.yaml",
+    "nap-events.txt",
     "kubectl-describe-pods.txt",
     "kubectl-events.txt",
     "kubectl-nodes.json",
     "az-container-list.json",
-    "AKS_RC=$?",
+    "NAP_RC=$?",
     "ONDEMAND_RC=$?",
     "RC=2 means a benchmark sample timed out or failed after raw JSON and diagnostics were written.",
+    "RC=2 can also mean the internal NAP pre-run or post-run check reported a missing or degraded NodePool, so the current run may not have new raw JSON.",
+    "RC=3 means the internal NAP pre-run or post-run zero-capacity check timed out.",
+    "RC=124 means the overall scenario deadline expired.",
     "The runner stops remaining runs after the first failed sample.",
     "results/failed-attempts/${scenario}-",
     "find results/raw -maxdepth 1 -type f -name \"${scenario}-run-*.json\" | sort",
     "find results/diagnostics -maxdepth 1 -mindepth 1 -type d -name \"${scenario}-run-*\" | sort",
-    "archive_failed_attempts aks",
+    "archive_failed_attempts aks-nap",
     "archive_failed_attempts vn2-ondemand",
     "Run the archive/rerun example only for the scenario that failed. Do not archive or rerun a scenario that already succeeded.",
     "# Example: rerun only the failed scenario after reviewing evidence.",
     "# Uncomment one block, not both.",
-    "# If aks failed:",
+    "# If aks-nap failed:",
     "# If vn2-ondemand failed:",
     "두 시나리오 명령이 모두 0으로 끝났을 때만 정확히 6개의 raw 파일을 기대합니다.",
-    "regular AKS",
+    "AKS NAP",
     "VN2 OnDemand",
     "$STANDBY_POOL",
     "Recover it from results/workshop.env or rerun the exact recovery steps from Module 02 before continuing.",
@@ -88,10 +103,11 @@ required_05 = [
     "check_pool_state \"standby healthy check\" 5",
     "check_pool_state \"standby recycle-to-zero check\" 0",
     "check_pool_state \"standby refill check\" 5",
+    "check_pool_state \"cached pre-run healthy check\" 5",
     "./scripts/check-standby-pool.sh -g \"$RG\" -n \"$STANDBY_POOL\" \\",
     "--expect-running 5 --timeout-seconds 1200 --interval-seconds 15",
     "./scripts/run-benchmark.sh \\",
-    "--scenario vn2-standby-uncached",
+    "--scenario vn2-standby",
     "--scenario vn2-standby-cached",
     "--resource-group \"$RG\"",
     "--standby-pool \"$STANDBY_POOL\"",
@@ -103,22 +119,22 @@ required_05 = [
     "--max-ready-capacity 5",
     "--refill-policy always",
     "--expect-running 0 --timeout-seconds 1200 --interval-seconds 15",
-    "find results/raw -maxdepth 1 -type f -name 'vn2-standby-uncached-run-*.json' | sort",
+    "find results/raw -maxdepth 1 -type f -name 'vn2-standby-run-*.json' | sort",
     "find results/raw -maxdepth 1 -type f -name 'vn2-standby-cached-run-*.json' | sort",
     "deterministic pool recycle",
-    "Scenario C",
+    "일반적인 pre-provisioned StandbyPool 조건",
     "UVM",
     "request/template input",
     "benchmark sample",
-    "results/diagnostics/vn2-standby-uncached-run-1/",
+    "results/diagnostics/vn2-standby-run-1/",
     "results/diagnostics/vn2-standby-cached-run-1/",
     "vn2-image-cache",
     "manifests/image-cache-pod.yaml",
     "RC=2 means the standby pool reported degraded health.",
     "RC=3 means the standby pool did not reach the expected running count before timeout.",
-    "UNCACHED_RC=$?",
+    "STANDBY_RC=$?",
     "CACHED_RC=$?",
-    "archive_failed_attempts vn2-standby-uncached",
+    "archive_failed_attempts vn2-standby",
     "archive_failed_attempts vn2-standby-cached",
     "If the collector failed after sample creation, raw JSON and diagnostics already exist for this scenario.",
     "RC=2 can also mean the internal standby pool pre-run or post-run check reported degraded health, so the current run may not have new raw JSON.",
@@ -127,7 +143,7 @@ required_05 = [
     "archive only any paths that actually exist for this scenario",
     "Run the archive/rerun example only for the standby scenario that failed. Do not archive or rerun a standby scenario that already succeeded.",
     "# Example: rerun only the failed standby scenario after evidence review and any pool recovery.",
-    "# If vn2-standby-uncached failed:",
+    "# If vn2-standby failed:",
     "# If vn2-standby-cached failed:",
     "results/failed-attempts/${scenario}-",
     "running 5 after recycle proves refill capacity, not by itself that image caching finished.",
@@ -150,6 +166,8 @@ for forbidden in (
     "STANDBY_POOL_NAME",
     "--pool-name",
     "--pool-health",
+    "aks-run-",
+    "vn2-standby-uncached",
     "bench-aks-run-1-pod-1",
     "bench-aks-run-1-pod-2",
 ):
@@ -157,6 +175,9 @@ for forbidden in (
         raise SystemExit(f"docs/04-baseline-ondemand-benchmark.md must not contain outdated text: {forbidden}")
     if forbidden in text05:
         raise SystemExit(f"docs/05-standby-cache-benchmark.md must not contain outdated text: {forbidden}")
+
+if re.search(r"--scenario aks(?:\s|\\|$)", text04):
+    raise SystemExit("docs/04-baseline-ondemand-benchmark.md must not use the old aks scenario")
 
 for path, text in ((module04, text04), (module05, text05)):
     if "set -euo pipefail" in text:
@@ -182,9 +203,9 @@ for text, path in ((text04, module04), (text05, module05)):
                 raise SystemExit(f"{path.name} uses unsupported run-benchmark.sh flag: {flag}")
 
 scenario_runs = {
-    "aks": text04,
+    "aks-nap": text04,
     "vn2-ondemand": text04,
-    "vn2-standby-uncached": text05,
+    "vn2-standby": text05,
     "vn2-standby-cached": text05,
 }
 for scenario, text in scenario_runs.items():
@@ -201,10 +222,10 @@ if text05.count("--refill-policy always") < 2:
 if text05.count("./scripts/check-standby-pool.sh -g \"$RG\" -n \"$STANDBY_POOL\" \\") < 1:
     raise SystemExit("docs/05-standby-cache-benchmark.md must show the standby checker command")
 
-uncached_case_match = re.search(r'case "\$UNCACHED_RC" in\n(.*?)\nesac', text05, re.S)
-if not uncached_case_match:
-    raise SystemExit('docs/05-standby-cache-benchmark.md is missing the UNCACHED_RC case block')
-uncached_case = uncached_case_match.group(1)
+standby_case_match = re.search(r'case "\$STANDBY_RC" in\n(.*?)\nesac', text05, re.S)
+if not standby_case_match:
+    raise SystemExit('docs/05-standby-cache-benchmark.md is missing the STANDBY_RC case block')
+standby_case = standby_case_match.group(1)
 for snippet in (
     '\n  2)\n',
     '\n  3)\n',
@@ -214,8 +235,8 @@ for snippet in (
     'check_pool_state "standby healthy check" 5',
     'archive only any paths that actually exist for this scenario',
 ):
-    if snippet not in uncached_case:
-        raise SystemExit(f'docs/05-standby-cache-benchmark.md UNCACHED_RC case is missing: {snippet}')
+    if snippet not in standby_case:
+        raise SystemExit(f'docs/05-standby-cache-benchmark.md STANDBY_RC case is missing: {snippet}')
 
 cached_case_match = re.search(r'case "\$CACHED_RC" in\n(.*?)\nesac', text05, re.S)
 if not cached_case_match:
@@ -234,17 +255,26 @@ for snippet in (
         raise SystemExit(f'docs/05-standby-cache-benchmark.md CACHED_RC case is missing: {snippet}')
 
 if re.search(
-    r'```bash\narchive_failed_attempts aks\n\n\./scripts/run-benchmark\.sh .*?archive_failed_attempts vn2-ondemand\n\n\./scripts/run-benchmark\.sh',
+    r'```bash\narchive_failed_attempts aks-nap\n\n\./scripts/run-benchmark\.sh .*?archive_failed_attempts vn2-ondemand\n\n\./scripts/run-benchmark\.sh',
     text04,
     re.S,
 ):
     raise SystemExit('docs/04-baseline-ondemand-benchmark.md must not show an unconditional paired archive/rerun block')
 
 if re.search(
-    r'```bash\narchive_failed_attempts vn2-standby-uncached\n\n\./scripts/run-benchmark\.sh .*?archive_failed_attempts vn2-standby-cached\n\n\./scripts/run-benchmark\.sh',
+    r'```bash\narchive_failed_attempts vn2-standby\n\n\./scripts/run-benchmark\.sh .*?archive_failed_attempts vn2-standby-cached\n\n\./scripts/run-benchmark\.sh',
     text05,
     re.S,
 ):
     raise SystemExit('docs/05-standby-cache-benchmark.md must not show an unconditional paired standby archive/rerun block')
+
+if text04.index("--scenario aks-nap") > text04.index("--scenario vn2-ondemand"):
+    raise SystemExit("docs/04-baseline-ondemand-benchmark.md must run aks-nap before vn2-ondemand")
+
+if text05.index("--scenario vn2-standby") > text05.index("--scenario vn2-standby-cached"):
+    raise SystemExit("docs/05-standby-cache-benchmark.md must run vn2-standby before vn2-standby-cached")
+
+if text05.index('check_pool_state "cached pre-run healthy check" 5') > text05.index("--scenario vn2-standby-cached"):
+    raise SystemExit("docs/05-standby-cache-benchmark.md must re-verify pool health before cached runs")
 
 PY

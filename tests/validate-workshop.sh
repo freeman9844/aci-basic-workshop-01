@@ -15,6 +15,7 @@ cd "$ROOT"
 run_step "Syntax-checking workshop shell scripts" bash -n scripts/*.sh
 run_step "Running Python unit tests" python3 -m unittest discover -s tests -p 'test_*.py' -v
 run_step "Running shell script contract tests" bash tests/scripts/test-check-standby-pool.sh
+run_step "Running NAP capacity checker tests" bash tests/scripts/test-check-nap-capacity.sh
 run_step "Running benchmark orchestration tests" bash tests/scripts/test-run-benchmark.sh
 run_step "Running preflight tests" bash tests/scripts/test-preflight.sh
 run_step "Running cleanup tests" bash tests/scripts/test-cleanup.sh

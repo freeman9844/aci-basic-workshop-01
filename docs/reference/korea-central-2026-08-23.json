@@ -1,0 +1,130 @@
+{
+  "title": "Korea Central AKS NAP and VN2 live rehearsal reference",
+  "run_date": "2026-08-23",
+  "run_window_utc": {
+    "started_at": "2026-08-23T14:27:41.636228Z",
+    "finished_at": "2026-08-23T14:53:59.675300Z"
+  },
+  "environment": {
+    "region": "koreacentral",
+    "aks_kubernetes_version": "1.34.9",
+    "system_node_sku": "Standard_D16s_v5",
+    "system_node_count": 1,
+    "nap_mode": "managed",
+    "nap_node_sku": "Standard_D4s_v5",
+    "nap_capacity_type": "on-demand",
+    "nap_max_nodes": 1,
+    "nap_api_versions": {
+      "aks_node_class": "karpenter.azure.com/v1beta1",
+      "node_pool": "karpenter.sh/v1"
+    },
+    "vn2_helm_chart_version": "1.3410.26081102",
+    "standby_running_capacity": 5,
+    "benchmark_image": "mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
+  },
+  "methodology": {
+    "runs_per_scenario": 3,
+    "pods_per_run": 5,
+    "total_runs": 12,
+    "total_ready_pods": 60,
+    "raw_json_files": 12,
+    "percentile_method": "nearest-rank",
+    "comparison_baseline": "vn2-ondemand",
+    "reference_only": true,
+    "not_sla": true
+  },
+  "scenarios": {
+    "aks-nap": {
+      "runs_count": 3,
+      "ready_samples": 15,
+      "failed_count": 0,
+      "timeout_count": 0,
+      "create_to_ready_ms": {
+        "median": 84590.269,
+        "p95": 84627.068
+      },
+      "batch_first_ready_ms": {
+        "median": 85100.767254,
+        "p95": 85612.97161
+      },
+      "batch_all_ready_ms": {
+        "median": 85612.97161,
+        "p95": 85635.399314
+      }
+    },
+    "vn2-ondemand": {
+      "runs_count": 3,
+      "ready_samples": 15,
+      "failed_count": 0,
+      "timeout_count": 0,
+      "create_to_ready_ms": {
+        "median": 52422.293,
+        "p95": 151687.99
+      },
+      "batch_first_ready_ms": {
+        "median": 38615.205375,
+        "p95": 55725.517182
+      },
+      "batch_all_ready_ms": {
+        "median": 54383.354754,
+        "p95": 152822.531517
+      }
+    },
+    "vn2-standby": {
+      "runs_count": 3,
+      "ready_samples": 15,
+      "failed_count": 0,
+      "timeout_count": 0,
+      "create_to_ready_ms": {
+        "median": 8216.73,
+        "p95": 20889.068
+      },
+      "batch_first_ready_ms": {
+        "median": 5858.347844,
+        "p95": 6054.344779
+      },
+      "batch_all_ready_ms": {
+        "median": 21153.258231,
+        "p95": 21779.734463
+      }
+    },
+    "vn2-standby-cached": {
+      "runs_count": 3,
+      "ready_samples": 15,
+      "failed_count": 0,
+      "timeout_count": 0,
+      "create_to_ready_ms": {
+        "median": 5431.667,
+        "p95": 8096.782
+      },
+      "batch_first_ready_ms": {
+        "median": 5807.17975,
+        "p95": 6496.876998
+      },
+      "batch_all_ready_ms": {
+        "median": 8067.049583,
+        "p95": 9001.794972
+      }
+    }
+  },
+  "comparisons": {
+    "aks-nap": {
+      "pod_speedup_ratio": 0.62,
+      "batch_speedup_ratio": 0.635
+    },
+    "vn2-standby": {
+      "pod_speedup_ratio": 6.38,
+      "batch_speedup_ratio": 2.571
+    },
+    "vn2-standby-cached": {
+      "pod_speedup_ratio": 9.651,
+      "batch_speedup_ratio": 6.741
+    }
+  },
+  "operational_evidence": {
+    "nap_lifecycle": "Each run began and ended with zero NAP nodes and zero NodeClaims; all five Pods in each run used one newly provisioned NAP node.",
+    "standby_pool": "All three uncached runs recorded healthy and running=5 before and after the run.",
+    "image_cache": "The cache request Pod was Running and the pool was deterministically recycled from running 5 to 0 and back to 5 before cached runs.",
+    "fallback": "No fallback condition was indicated by the retained healthy/running=5 pool checks; all 60 Pods became Ready with zero failures and zero timeouts."
+  }
+}

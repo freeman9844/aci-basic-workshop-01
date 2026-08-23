@@ -193,13 +193,13 @@ for fragment in required_readme_fragments:
     if fragment not in readme_text:
         raise SystemExit(f"README is missing required operator/cleanup text: {fragment}")
 
-for stale_path in (
+for required_path in (
     root / "docs/reference/korea-central-2026-08-23.md",
     root / "docs/reference/korea-central-2026-08-23.json",
     root / "tests/test_rehearsal_reference.py",
 ):
-    if stale_path.exists():
-        raise SystemExit(f"Obsolete warm-AKS reference artifact must be removed: {stale_path.relative_to(root)}")
+    if not required_path.exists():
+        raise SystemExit(f"Current NAP reference artifact is missing: {required_path.relative_to(root)}")
 
 for module, path in module_paths.items():
     text = path.read_text(encoding="utf-8")

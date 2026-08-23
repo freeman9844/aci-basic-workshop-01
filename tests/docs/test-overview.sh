@@ -60,9 +60,9 @@ required_readme_strings = [
     "Mandatory cleanup",
     "results/workshop.env",
     "fresh Cloud Shell recovery",
-    "새 NAP 기반 live rehearsal",
-    "구현 workflow의 후속 단계",
-    "실제 측정값이 게시되기 전에는 현재 reference 성능 수치가 없습니다",
+    "Korea Central 2026-08-23 live rehearsal reference",
+    "docs/reference/korea-central-2026-08-23.md",
+    "docs/reference/korea-central-2026-08-23.json",
 ]
 for required in required_readme_strings:
     if required not in readme_text:
@@ -79,9 +79,9 @@ if re.search(re.escape(stale_aks_path) + r"(?!-nap)", readme_text):
 for stale_reference in (
     "Pod median 9.796배",
     "Batch all-ready median 7.062배",
-    "[Korea Central 실제 리허설 참고 결과](docs/reference/korea-central-2026-08-23.md)",
-    "docs/reference/korea-central-2026-08-23.json",
+    "vn2-standby-" + "uncached",
     "Task 11의 새 NAP live rehearsal reference",
+    "실제 측정값이 게시되기 전에는 현재 reference 성능 수치가 없습니다",
 ):
     if stale_reference in readme_text:
         raise SystemExit(f"README must not present the obsolete warm-AKS reference as current: {stale_reference}")
@@ -167,13 +167,13 @@ if participant_total != 180:
 if "중간에 shell/session을 바꾸지 않았다." in readme_text:
     raise SystemExit("README must not require a single uninterrupted shell session anymore")
 
-for stale_path in (
+for required_path in (
     root / "docs/reference/korea-central-2026-08-23.md",
     root / "docs/reference/korea-central-2026-08-23.json",
     root / "tests/test_rehearsal_reference.py",
 ):
-    if stale_path.exists():
-        raise SystemExit(f"Obsolete warm-AKS reference artifact must be removed: {stale_path.relative_to(root)}")
+    if not required_path.exists():
+        raise SystemExit(f"Current NAP reference artifact is missing: {required_path.relative_to(root)}")
 
 for required in (
     "results/workshop.env is the authoritative workshop state",

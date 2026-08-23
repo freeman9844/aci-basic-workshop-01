@@ -76,8 +76,9 @@ required_06 = [
     "SLA가 아닙니다",
     "제품 전체 성능 보장이 아닙니다",
     "실패/timeout sample을 숨기지 않습니다",
-    "새 NAP 기반 live rehearsal",
-    "현재 reference 성능 수치가 없습니다",
+    "Korea Central 2026-08-23 live rehearsal reference",
+    "./reference/korea-central-2026-08-23.md",
+    "./reference/korea-central-2026-08-23.json",
 ]
 
 for item in required_06:
@@ -205,7 +206,7 @@ for forbidden in (
     "vn2-standby-" + "uncached",
     "regular " + "AKS",
     "warm fixed " + "AKS",
-    "korea-central-2026-08-23",
+    "현재 reference 성능 수치가 없습니다",
 ):
     if forbidden in text06:
         raise SystemExit(f"docs/06-analyze-results.md must not contain stale warm-AKS text: {forbidden}")

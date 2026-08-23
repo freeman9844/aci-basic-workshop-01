@@ -101,9 +101,20 @@ scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p
 
 > **주의:** 이 워크숍의 p95와 speed-up 은 기술 통계입니다. **SLA가 아닙니다.** 실패/timeout sample을 숨기지 않습니다. 더 빠른 한 번의 run 도 제품 전체 성능 보장이 아닙니다.
 
-### 6) live rehearsal 상태
+### 6) Korea Central live rehearsal reference
 
-기존 warm AKS 리허설 값은 `aks-nap` 결과가 아니므로 제거했습니다. 새 NAP 기반 live rehearsal은 구현 workflow의 후속 단계에서 네 시나리오 12개 run을 실제 실행한 뒤 게시합니다. 그 전에는 현재 reference 성능 수치가 없습니다. 자신의 결과를 임의의 placeholder나 과거 수치와 맞추지 말고 raw evidence, 실패/timeout, Azure region/SKU/capacity 조건을 함께 기록하십시오.
+2026-08-23 Korea Central에서 5 Pods × 3회씩 측정한 live reference가 게시되어 있습니다.
+
+| Scenario | Pod create→ready median | Batch all-ready median | Pod ratio | Batch ratio |
+| --- | ---: | ---: | ---: | ---: |
+| `aks-nap` | 84,590.3 ms | 85,613.0 ms | 0.620x | 0.635x |
+| `vn2-ondemand` | 52,422.3 ms | 54,383.4 ms | baseline | baseline |
+| `vn2-standby` | 8,216.7 ms | 21,153.3 ms | 6.380x | 2.571x |
+| `vn2-standby-cached` | 5,431.7 ms | 8,067.0 ms | 9.651x | 6.741x |
+
+[Korea Central 2026-08-23 live rehearsal reference](./reference/korea-central-2026-08-23.md)에는 환경과 p95, NAP 0→1→0 lifecycle, StandbyPool `healthy`/`running=5`, cache 5→0→5 recycle, 실패/timeout/fallback evidence가 있습니다. 원본 정밀도와 ratio contract는 [reference JSON](./reference/korea-central-2026-08-23.json)에 있습니다.
+
+이 값은 특정 rehearsal의 reference이며 SLA나 성능 보장이 아닙니다. 자신의 결과를 reference와 억지로 맞추지 말고 raw evidence, 실패/timeout, Azure region/SKU/capacity 조건을 함께 기록하십시오.
 
 ## 완료 체크포인트
 
@@ -113,7 +124,7 @@ scenario,runs_count,ready_samples,failed_count,timeout_count,pod_median_ms,pod_p
 - `nearest-rank p95` 가 보간하지 않는 descriptive metric 임을 설명할 수 있다.
 - `failed_count`, `timeout_count`, `non_ready_pods` 를 숨기지 않고 개별 run evidence 와 함께 읽었다.
 - `aks-nap`, `vn2-standby`, `vn2-standby-cached`가 모두 VN2 OnDemand median baseline을 사용하는 이유를 설명할 수 있다.
-- 새 live reference가 게시되기 전에는 현재 reference 성능 수치가 없음을 설명할 수 있다.
+- 새 live reference의 환경과 NAP/Standby/cache lifecycle 조건을 함께 설명할 수 있다.
 
 ## 문제 해결
 

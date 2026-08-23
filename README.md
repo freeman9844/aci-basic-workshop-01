@@ -138,9 +138,18 @@ StandbyPool이 compute 준비 시간을 줄여도 새 capacity가 benchmark imag
 
 구현과 측정 절차는 [Module 03: 이중 VN2 설치와 standby pool 준비](docs/03-install-dual-vn2.md), [Module 05: StandbyPool과 Image Cache 측정](docs/05-standby-cache-benchmark.md), [Module 06: 결과 분석과 해석](docs/06-analyze-results.md)에서 이어집니다. 제품 개념은 Microsoft Learn의 [Virtual nodes on Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-virtual-nodes)와 [Standby pools for Azure Container Instances](https://learn.microsoft.com/azure/container-instances/container-instances-standby-pool-overview)를 참고하세요.
 
-## Live rehearsal 상태
+## Korea Central live rehearsal reference
 
-기존 warm AKS 측정값은 현재 `aks-nap` 아키텍처에 재사용하지 않습니다. 새 NAP 기반 live rehearsal은 구현 workflow의 후속 단계에서 네 시나리오를 실제로 실행한 뒤 게시합니다. 실제 측정값이 게시되기 전에는 현재 reference 성능 수치가 없습니다. 임의의 placeholder 값이나 이전 수치를 기대값 또는 SLA로 사용하지 마십시오.
+2026-08-23 Korea Central에서 각 시나리오를 5 Pods × 3회 실행한 측정 reference입니다. Pod와 Batch ratio는 모두 **VN2 OnDemand median / candidate median**이며, 1보다 크면 candidate가 더 빨랐음을 뜻합니다.
+
+| Scenario | Pod create→ready median | Batch all-ready median | Pod ratio | Batch ratio |
+| --- | ---: | ---: | ---: | ---: |
+| `aks-nap` | 84,590.3 ms | 85,613.0 ms | 0.620x | 0.635x |
+| `vn2-ondemand` | 52,422.3 ms | 54,383.4 ms | baseline | baseline |
+| `vn2-standby` | 8,216.7 ms | 21,153.3 ms | 6.380x | 2.571x |
+| `vn2-standby-cached` | 5,431.7 ms | 8,067.0 ms | 9.651x | 6.741x |
+
+세부 환경, p95, NAP 0→1→0 lifecycle, StandbyPool `healthy`/`running=5`, cache 5→0→5 recycle와 실패/timeout/fallback evidence는 [Korea Central 2026-08-23 live rehearsal reference](docs/reference/korea-central-2026-08-23.md)와 [reference JSON](docs/reference/korea-central-2026-08-23.json)에 있습니다. 이 결과는 특정 rehearsal의 reference일 뿐 SLA나 성능 보장이 아닙니다.
 
 ## 사전 요구 사항
 

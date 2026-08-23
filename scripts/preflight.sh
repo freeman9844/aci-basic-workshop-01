@@ -239,6 +239,7 @@ validate_vm_sku() {
   local matching_vm_skus_status=0
   local matching_vm_skus_count=""
   local unrestricted_vm_sku_count=""
+  local unrestricted_vm_sku_status=0
 
   set +e
   matching_vm_skus_json="$(jq -c --arg size "$vm_size" --arg location "$location" '
@@ -271,9 +272,45 @@ validate_vm_sku() {
     die "VM size $vm_size is not available in $location"
   fi
 
-  unrestricted_vm_sku_count="$(jq_string "$matching_vm_skus_json" '
-    map(select((.restrictions // []) | length == 0)) | length
-  ' 'unrestricted VM SKU entries')"
+  set +e
+  unrestricted_vm_sku_count="$(jq -r --arg location "$location" '
+    def normalized_locations:
+      if . == null then
+        []
+      elif type == "array" and all(.[]; type == "string") then
+        map(ascii_downcase)
+      else
+        error("restriction locations must be an array of strings")
+      end;
+
+    def applies_to_location($location):
+      (.type? // null) as $type
+      | if (($type | type) == "string" and ($type | ascii_downcase) == "location") then
+          (
+            ((.restrictionInfo.locations? // null) | normalized_locations)
+            + ((.values? // null) | normalized_locations)
+            | unique
+          ) as $locations
+          | ($locations | length) == 0
+            or (($locations | index($location | ascii_downcase)) != null)
+        else
+          false
+        end;
+
+    [
+      .[]
+      | select(
+          [(.restrictions // [])[] | select(applies_to_location($location))]
+          | length == 0
+        )
+    ]
+    | length
+  ' <<<"$matching_vm_skus_json" 2>/dev/null)"
+  unrestricted_vm_sku_status=$?
+  set -e
+  if [[ "$unrestricted_vm_sku_status" -ne 0 || ! "$unrestricted_vm_sku_count" =~ ^[0-9]+$ ]]; then
+    die "failed to parse VM SKU availability"
+  fi
   if [[ "$unrestricted_vm_sku_count" -eq 0 ]]; then
     printf 'ERROR: VM size %s is restricted in %s.\n' "$vm_size" "$location" >&2
     printf 'Restriction details:\n' >&2

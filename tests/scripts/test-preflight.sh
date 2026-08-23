@@ -189,6 +189,47 @@ assert_vm_usage_failure() {
   [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 }
 
+assert_vm_sku_allowed() {
+  local payload="$1"
+  local output=""
+  local status=0
+
+  set_valid_defaults
+  write_file "$TMP/vm-skus.json" "$payload"
+
+  set +e
+  output="$(run_preflight 2>&1)"
+  status=$?
+  set -e
+
+  if [[ "$status" -ne 0 ]]; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  grep -F 'Preflight checks passed.' <<<"$output" >/dev/null
+  test -f "$ENVIRONMENT_JSON"
+}
+
+assert_vm_sku_location_restricted() {
+  local payload="$1"
+  local vm_size="$2"
+  local output=""
+  local status=0
+
+  set_valid_defaults
+  write_file "$TMP/vm-skus.json" "$payload"
+
+  set +e
+  output="$(run_preflight 2>&1)"
+  status=$?
+  set -e
+
+  [[ "$status" -ne 0 ]]
+  grep -F "ERROR: VM size $vm_size is restricted in koreacentral." <<<"$output" >/dev/null
+  grep -F '"reasonCode": "NotAvailableForSubscription"' <<<"$output" >/dev/null
+  [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+}
+
 run_preflight() {
   env \
     TEST_LOG_DIR="$TMP/logs" \
@@ -273,17 +314,11 @@ legacy_success_output="$(run_preflight 2>&1)"
 grep -F 'Preflight checks passed.' <<<"$legacy_success_output" >/dev/null
 test -f "$ENVIRONMENT_JSON"
 
-set_valid_defaults
-write_file "$TMP/vm-skus.json" '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[{"type":"Location","reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"]}}]}]'
-set +e
-restricted_sku_output="$(run_preflight 2>&1)"
-restricted_sku_status=$?
-set -e
-[[ "$restricted_sku_status" -ne 0 ]]
-grep -F 'ERROR: VM size Standard_D4s_v5 is restricted in koreacentral.' <<<"$restricted_sku_output" >/dev/null
-grep -F '"reasonCode": "NotAvailableForSubscription"' <<<"$restricted_sku_output" >/dev/null
-grep -F '"locations": [' <<<"$restricted_sku_output" >/dev/null
-[[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+assert_vm_sku_allowed '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[{"type":"Zone","values":["1"],"reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"],"zones":["1"]}}]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[]}]'
+assert_vm_sku_allowed '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[{"type":"Zone","reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"],"zones":["2"]}}]}]'
+
+assert_vm_sku_location_restricted '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[{"type":"Location","values":["koreacentral"],"reasonCode":"NotAvailableForSubscription"}]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[]}]' 'Standard_D16s_v5'
+assert_vm_sku_location_restricted '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[{"type":"Location","reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"]}}]}]' 'Standard_D4s_v5'
 
 set_valid_defaults
 AZ_FEATURE_MODE='resource-not-found'

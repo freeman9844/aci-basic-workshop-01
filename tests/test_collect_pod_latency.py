@@ -76,6 +76,37 @@ class CollectorTests(unittest.TestCase):
         self.assertEqual(pod["scheduled_observed_ms"], 250.0)
         self.assertEqual(pod["ready_observed_ms"], 1000.0)
 
+    def test_finalize_run_excludes_ready_then_failed_pod_from_batch_success(self):
+        result = MODULE.finalize_run(
+            scenario="aks-nap",
+            run_number=1,
+            expected_pods=2,
+            observations={
+                "bench-1": {
+                    "name": "bench-1",
+                    "created_observed_ms": 0.0,
+                    "scheduled_observed_ms": 500.0,
+                    "ready_observed_ms": 1000.0,
+                    "failed_observed_ms": 1500.0,
+                },
+                "bench-2": {
+                    "name": "bench-2",
+                    "created_observed_ms": 0.0,
+                    "scheduled_observed_ms": 750.0,
+                    "ready_observed_ms": 2000.0,
+                    "failed_observed_ms": None,
+                },
+            },
+            timeout_ms=300000.0,
+            stop_reason="failure",
+        )
+
+        self.assertEqual(result["pods"][0]["terminal_state"], "failed")
+        self.assertEqual(result["pods"][1]["terminal_state"], "ready")
+        self.assertEqual(result["batch"]["first_ready_ms"], 2000.0)
+        self.assertIsNone(result["batch"]["all_ready_ms"])
+        self.assertEqual(result["completion_reason"], "failure")
+
     def test_collect_run_applies_manifest_into_requested_namespace(self):
         workspace = self._workspace("apply-namespace")
         output = workspace / "run.json"

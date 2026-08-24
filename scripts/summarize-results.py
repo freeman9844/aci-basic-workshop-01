@@ -144,12 +144,13 @@ def summarize_scenario(runs):
             cs = pod_record.get("create_to_scheduled_ms")
             sr = pod_record.get("scheduled_to_ready_ms")
 
-            if cr is not None:
-                create_to_ready_vals.append(cr)
-            if cs is not None:
-                create_to_scheduled_vals.append(cs)
-            if sr is not None:
-                scheduled_to_ready_vals.append(sr)
+            if state == "ready":
+                if cr is not None:
+                    create_to_ready_vals.append(cr)
+                if cs is not None:
+                    create_to_scheduled_vals.append(cs)
+                if sr is not None:
+                    scheduled_to_ready_vals.append(sr)
 
         batch = dict(run.get("batch", {}))
         fr = batch.get("first_ready_ms")

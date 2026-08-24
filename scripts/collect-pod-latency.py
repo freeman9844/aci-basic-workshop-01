@@ -323,7 +323,10 @@ def finalize_run(
         )
         record.setdefault("name", name)
         record["terminal_state"] = _pod_terminal_state(record, stop_reason)
-        if record.get("ready_observed_ms") is not None:
+        if (
+            record["terminal_state"] == "ready"
+            and record.get("ready_observed_ms") is not None
+        ):
             ready_vals.append(record["ready_observed_ms"])
         else:
             all_ready = False

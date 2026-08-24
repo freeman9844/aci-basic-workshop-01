@@ -160,6 +160,10 @@ case "$cmd $subcmd" in
     ;;
   "get namespace")
     namespace="${3:?}"
+    if [[ "${FAIL_NAMESPACE_GET:-0}" == "1" ]]; then
+      printf 'Unable to connect to the server: dial tcp timeout\n' >&2
+      exit 1
+    fi
     if [[ -e "$TEST_STATE_DIR/ns-$namespace" ]]; then
       printf 'namespace/%s\n' "$namespace"
       exit 0
@@ -194,6 +198,7 @@ reset_behavior() {
   unset FAIL_CREATE_NAMESPACE CREATE_NAMESPACE_THEN_SLEEP CREATE_NAMESPACE_SLEEP_SECONDS
   unset FAIL_KUBECTL_DESCRIBE_PODS FAIL_KUBECTL_GET_EVENTS
   unset FAIL_KUBECTL_GET_NODES FAIL_AZ_CONTAINER_LIST
+  unset FAIL_NAMESPACE_GET
   unset SLOW_STANDBY_CALL SLOW_STANDBY_SECONDS SLOW_NAP_CALL SLOW_NAP_SECONDS
   unset SLOW_COLLECTOR SLOW_COLLECTOR_SECONDS COLLECTOR_HONOR_TIMEOUT
   unset SLOW_KUBECTL_PREFIX SLOW_KUBECTL_SECONDS
@@ -218,6 +223,7 @@ run_with_fakes() {
     FAIL_KUBECTL_DESCRIBE_PODS="${FAIL_KUBECTL_DESCRIBE_PODS-}" \
     FAIL_KUBECTL_GET_EVENTS="${FAIL_KUBECTL_GET_EVENTS-}" \
     FAIL_KUBECTL_GET_NODES="${FAIL_KUBECTL_GET_NODES-}" \
+    FAIL_NAMESPACE_GET="${FAIL_NAMESPACE_GET-}" \
     FAIL_AZ_CONTAINER_LIST="${FAIL_AZ_CONTAINER_LIST-}" \
     SLOW_STANDBY_CALL="${SLOW_STANDBY_CALL-}" \
     SLOW_STANDBY_SECONDS="${SLOW_STANDBY_SECONDS-}" \
@@ -489,6 +495,22 @@ if find "$TMP/standby-once" -name '*.yaml' -print -quit | grep -q .; then
   echo 'expected one-run standby path to clean generated manifests' >&2
   exit 1
 fi
+
+reset_behavior
+reset_logs
+FAIL_NAMESPACE_GET=1
+set +e
+output="$(run_with_fakes \
+  --scenario vn2-ondemand \
+  --runs 1 \
+  --resource-group rg-test \
+  --output-dir "$TMP/namespace-get-failure" 2>&1)"
+status=$?
+set -e
+
+[[ "$status" -eq 1 ]]
+grep -F 'ERROR: unable to verify namespace deletion' <<<"$output" >/dev/null
+test -f "$TMP/namespace-get-failure/raw/vn2-ondemand-run-1.json"
 
 reset_behavior
 reset_logs

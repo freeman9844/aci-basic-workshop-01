@@ -374,18 +374,24 @@ create_namespace() {
 
 wait_for_namespace_gone() {
   local namespace="$1"
-  local status sleep_timeout
+  local output status sleep_timeout
 
   while true; do
-    if run_with_cleanup_deadline "namespace cleanup verification" \
-      "$KUBECTL_BIN" get namespace "$namespace" >/dev/null 2>&1; then
+    if output="$(run_with_cleanup_deadline "namespace cleanup verification" \
+      "$KUBECTL_BIN" get namespace "$namespace" 2>&1)"; then
       :
     else
       status=$?
       if [[ "$status" -eq 124 ]]; then
+        printf '%s\n' "$output" >&2
         return 124
       fi
-      return 0
+      if grep -Fq '(NotFound)' <<<"$output"; then
+        return 0
+      fi
+      printf 'ERROR: unable to verify namespace deletion for %s: %s\n' \
+        "$namespace" "$output" >&2
+      return "$status"
     fi
 
     if (( SECONDS >= cleanup_deadline )); then

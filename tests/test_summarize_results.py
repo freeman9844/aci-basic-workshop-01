@@ -78,6 +78,41 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(evidence["non_ready_pods"][0]["terminal_state"], "timeout")
         self.assertEqual(evidence["pods"][1]["fallback"]["observed"], True)
 
+    def test_scenario_summary_excludes_ready_then_failed_pod_from_latency_statistics(self):
+        runs = [
+            {
+                "schema_version": 1,
+                "scenario": "aks-nap",
+                "run": 1,
+                "pods": [
+                    {
+                        "name": "failed-after-ready",
+                        "terminal_state": "failed",
+                        "create_to_ready_ms": 999999.0,
+                        "create_to_scheduled_ms": 999.0,
+                        "scheduled_to_ready_ms": 999000.0,
+                    },
+                    {
+                        "name": "ready",
+                        "terminal_state": "ready",
+                        "create_to_ready_ms": 3000.0,
+                        "create_to_scheduled_ms": 200.0,
+                        "scheduled_to_ready_ms": 2800.0,
+                    },
+                ],
+                "batch": {"first_ready_ms": 3000.0, "all_ready_ms": None},
+            }
+        ]
+
+        result = MODULE.summarize_scenario(runs)
+
+        self.assertEqual(result["ready_samples"], 1)
+        self.assertEqual(result["failed_count"], 1)
+        self.assertEqual(result["create_to_ready_ms"]["count"], 1)
+        self.assertEqual(result["create_to_ready_ms"]["median"], 3000.0)
+        self.assertEqual(result["create_to_scheduled_ms"]["count"], 1)
+        self.assertEqual(result["scheduled_to_ready_ms"]["count"], 1)
+
     def test_speedup_uses_ondemand_over_cached(self):
         self.assertEqual(MODULE.speedup_ratio(12000.0, 3000.0), 4.0)
 

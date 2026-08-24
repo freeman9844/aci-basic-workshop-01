@@ -95,16 +95,16 @@ if len(readme_lines) < 2:
     fail("README.md must contain a title and summary")
 if not re.match(r"^# .+", readme_lines[0]):
     fail("README.md must start with a level-1 title")
+if readme_lines[0] != "# ACI Basic 워크솝":
+    fail("README.md title must be '# ACI Basic 워크솝'")
 if not readme_lines[1].startswith("> "):
     fail("README.md title must be followed by a concise blockquote summary")
 
 required_readme_sections = (
-    "## 빠른 시작",
     "## 아키텍처",
     "## 학습 목표",
     "## 사전 요구사항",
     "## 모듈 구성",
-    "## 세션 복구 가이드",
     "## 완료 기준",
     "## 시간표",
     "## 비용 개요",

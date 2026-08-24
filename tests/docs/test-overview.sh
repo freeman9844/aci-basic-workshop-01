@@ -26,8 +26,6 @@ if missing:
 
 readme_text = readme.read_text(encoding="utf-8")
 required_readme_strings = [
-    "git clone",
-    "~/aci-vn2-performance-workshop",
     "180분",
     "Korea Central",
     "5개 Pod × 3회",
@@ -67,6 +65,10 @@ required_readme_strings = [
 for required in required_readme_strings:
     if required not in readme_text:
         raise SystemExit(f"README is missing required text: {required}")
+
+for removed_heading in ("## 빠른 시작", "## 세션 복구 가이드"):
+    if removed_heading in readme_text:
+        raise SystemExit(f"README must not contain removed section: {removed_heading}")
 
 for scenario in ("aks-nap", "vn2-ondemand", "vn2-standby", "vn2-standby-cached"):
     if scenario not in readme_text:
@@ -174,25 +176,5 @@ for required_path in (
 ):
     if not required_path.exists():
         raise SystemExit(f"Current NAP reference artifact is missing: {required_path.relative_to(root)}")
-
-for required in (
-    "results/workshop.env is the authoritative workshop state",
-    "source results/workshop.env",
-    'az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing',
-    "fresh Cloud Shell recovery",
-):
-    if required not in readme_text:
-        raise SystemExit(f"README is missing workshop state guidance: {required}")
-
-readme_recovery_sequence = "\n".join(
-    [
-        "( set -euo pipefail",
-        "  source results/workshop.env",
-        '  az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing',
-        ")",
-    ]
-)
-if readme_recovery_sequence not in readme_text:
-    raise SystemExit("README fresh-shell recovery must fail fast while restoring kubeconfig")
 
 PY

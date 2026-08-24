@@ -1,4 +1,4 @@
-# ACI VN2 성능 워크숍
+# ACI Basic 워크솝
 
 > Korea Central 기준으로 **AKS NAP**, **VN2 OnDemand**, **StandbyPool**, **Image Cache** 경로를 같은 계약으로 비교하고, `5개 Pod × 3회` 측정에서 **12 raw JSON**과 all-success 기준 **60 Pod** evidence를 해석하는 180분 핸즈온 워크숍입니다.
 
@@ -8,40 +8,6 @@
 
 > [!WARNING]
 > **비용**이 즉시 발생합니다. 실습 중에는 두 VN2 infrastructure release와 cluster system Pod를 호스팅하는 `Standard_D16s_v5` fixed system node, NAP benchmark 때 0→1로 생성되는 `Standard_D4s_v5` AKS VM, `cg` subnet에 연결한 **NAT Gateway** 와 **public IP**, **ACI OnDemand** container group, 그리고 StandbyPool의 **5개의 warm standby** container groups가 함께 사용됩니다. Module 07의 정리 절차를 생략하면 실습 종료 후에도 과금이 계속됩니다.
-
----
-
-## 빠른 시작
-
-1. Azure Portal Cloud Shell Bash 또는 동등한 Bash 환경을 엽니다.
-2. 워크숍 저장소를 고정 경로에 clone 합니다.
-
-   ```bash
-   git clone <repository-url> ~/aci-vn2-performance-workshop
-   cd ~/aci-vn2-performance-workshop
-   ```
-
-3. [01. 사전 검사와 참가 조건 확인](docs/01-prerequisites.md)부터 [07. 제약, 트러블슈팅, 정리](docs/07-limitations-troubleshooting-cleanup.md)까지 순서대로 진행합니다.
-
-실습은 Azure Portal Cloud Shell Bash를 기준으로 작성되었습니다. 로컬 터미널을 사용할 경우 `az`, `kubectl`, `helm`, `jq`, `python3`, `git` 버전이 Module 01 기준을 만족해야 합니다.
-
----
-
-## 세션 복구 가이드
-
-`results/workshop.env is the authoritative workshop state`. Module 02가 이 파일을 원자적으로 만들고, Module 03이 standby 관련 키를 같은 파일에 다시 기록합니다. 이후 participant 모듈은 fresh Cloud Shell recovery가 필요할 때 가장 먼저 이 파일을 읽습니다.
-
-fresh Cloud Shell recovery 가 필요하면 저장소 루트에서 아래처럼 다시 불러오십시오.
-
-```bash
-cd ~/aci-vn2-performance-workshop
-( set -euo pipefail
-  source results/workshop.env
-  az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing
-)
-```
-
-`results/workshop.env` 가 없다면 Module 07의 fresh-session recovery 절차로 정확한 workshop RG를 다시 확인한 뒤 파일을 복구하고 진행합니다.
 
 ---
 

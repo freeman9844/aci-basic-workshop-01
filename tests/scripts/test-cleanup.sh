@@ -32,10 +32,11 @@ if [[ "$*" == "$namespace_list_command" ]]; then
         printf '%s\n' "$NAMESPACE_LIST"
       else
         printf '%s\n' \
-          vn2-bench-aks-nap-r1-111 \
-          vn2-bench-vn2-ondemand-r2-222 \
+          vn2-hands-on-ondemand-r1-111 \
+          vn2-hands-on-standby-cached-r2-222 \
+          vn2-bench-aks-nap-r3-333 \
           benchmark \
-          vn2-benchmark-unrelated \
+          vn2-hands-onish \
           default
       fi
       exit 0
@@ -43,7 +44,7 @@ if [[ "$*" == "$namespace_list_command" ]]; then
   esac
 fi
 
-if [[ "$*" == delete\ namespace\ vn2-bench-* ]]; then
+if [[ "$*" == delete\ namespace\ vn2-hands-on-* || "$*" == delete\ namespace\ vn2-bench-* ]]; then
   case "${KUBECTL_MODE:-success}" in
     hang-namespace-delete)
       sleep 30
@@ -69,40 +70,14 @@ case "${KUBECTL_MODE:-success}" in
         ;;
     esac
     ;;
-  hang-nodepool)
+  hang-image-cache-delete)
     case "$*" in
-      "delete nodepool workshop-nap --ignore-not-found=true"|\
-      "delete nodepool workshop-nap --ignore-not-found=true --wait=false")
+      "delete namespace vn2-image-cache --ignore-not-found=true --wait=false")
         sleep 30
         ;;
-      "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
+      "delete nodepool workshop-nap --ignore-not-found=true --wait=false"|\
       "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false"|\
       "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
-        exit 0
-        ;;
-    esac
-    ;;
-  hang-nodeclaims)
-    case "$*" in
-      "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
-        sleep 30
-        ;;
-      "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
-      "delete nodepool workshop-nap --ignore-not-found=true --wait=false"|\
-      "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false")
-        exit 0
-        ;;
-    esac
-    ;;
-  nodeclaims-remain)
-    case "$*" in
-      "get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name")
-        printf 'nodeclaim.karpenter.sh/workshop-nap-test\n'
-        exit 0
-        ;;
-      "delete namespace vn2-image-cache --ignore-not-found=true --wait=false"|\
-      "delete nodepool workshop-nap --ignore-not-found=true --wait=false"|\
-      "delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false")
         exit 0
         ;;
     esac
@@ -267,6 +242,40 @@ run_cleanup() {
     "$@"
 }
 
+assert_no_nap_cleanup_commands() {
+  local log_path="$1"
+  local forbidden
+
+  for forbidden in \
+    'delete nodepool workshop-nap' \
+    'delete aksnodeclass workshop-nap' \
+    'get nodeclaims' \
+    'karpenter.sh/nodepool'
+  do
+    if grep -F "$forbidden" "$log_path" >/dev/null; then
+      echo "cleanup must not issue NAP cleanup command: $forbidden" >&2
+      exit 1
+    fi
+  done
+}
+
+assert_only_hands_on_namespace_deletes() {
+  python3 - "$1" <<'PY'
+import sys
+
+allowed_image_cache = "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false"
+
+for line in (line.strip() for line in open(sys.argv[1], encoding="utf-8")):
+    if not line.startswith("kubectl delete namespace "):
+        continue
+    if line == allowed_image_cache:
+        continue
+    if line.startswith("kubectl delete namespace vn2-hands-on-") and line.endswith(" --ignore-not-found=true --wait=false"):
+        continue
+    raise SystemExit(f"unexpected namespace delete: {line}")
+PY
+}
+
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 success_output="$(run_cleanup \
   AZ_MODE=success \
@@ -286,12 +295,9 @@ expected = [
     "az group exists --name rg-test",
     "az group show --name rg-test --query name --output tsv",
     'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
-    "kubectl delete namespace vn2-bench-aks-nap-r1-111 --ignore-not-found=true --wait=false",
-    "kubectl delete namespace vn2-bench-vn2-ondemand-r2-222 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-hands-on-ondemand-r1-111 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-hands-on-standby-cached-r2-222 --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
@@ -303,14 +309,8 @@ if lines != expected:
     raise SystemExit(f"unexpected command order: {lines!r}")
 PY
 
-if grep -F 'kubectl delete namespace benchmark ' "$TMP/logs/commands.log" >/dev/null; then
-  echo 'cleanup must not delete the unrelated literal benchmark namespace' >&2
-  exit 1
-fi
-if grep -F 'kubectl delete namespace vn2-benchmark-unrelated ' "$TMP/logs/commands.log" >/dev/null; then
-  echo 'cleanup must only delete namespaces with the exact vn2-bench- prefix' >&2
-  exit 1
-fi
+assert_only_hands_on_namespace_deletes "$TMP/logs/commands.log"
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -332,9 +332,10 @@ hanging_namespace_list_status=$?
 set -e
 
 [[ "$hanging_namespace_list_status" -eq 0 ]]
-grep -F 'discover benchmark namespaces with prefix vn2-bench-: timed out after 1s' <<<"$hanging_namespace_list_output" >/dev/null
+grep -F 'discover hands-on namespaces with prefix vn2-hands-on-: timed out after 1s' <<<"$hanging_namespace_list_output" >/dev/null
 grep -F 'Cleanup completed with warnings.' <<<"$hanging_namespace_list_output" >/dev/null
 grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -346,7 +347,7 @@ hanging_namespace_delete_output="$(timeout 5s env \
   HELM_BIN="$TMP/bin/helm" \
   AZ_MODE=success \
   KUBECTL_MODE=hang-namespace-delete \
-  NAMESPACE_LIST=vn2-bench-hanging \
+  NAMESPACE_LIST=vn2-hands-on-hanging \
   CLUSTER_CLEANUP_TIMEOUT_SECONDS=1 \
   "$ROOT/scripts/cleanup.sh" \
   --resource-group rg-test \
@@ -357,84 +358,35 @@ hanging_namespace_delete_status=$?
 set -e
 
 [[ "$hanging_namespace_delete_status" -eq 0 ]]
-grep -F 'delete namespace vn2-bench-hanging: timed out after 1s' <<<"$hanging_namespace_delete_output" >/dev/null
+grep -F 'delete namespace vn2-hands-on-hanging: timed out after 1s' <<<"$hanging_namespace_delete_output" >/dev/null
 grep -F 'Cleanup completed with warnings.' <<<"$hanging_namespace_delete_output" >/dev/null
 grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
-hanging_kubectl_output="$(timeout 5s env \
+hanging_image_cache_output="$(timeout 5s env \
   TEST_LOG_DIR="$TMP/logs" \
   AZ_STATE_DIR="$TMP/state" \
   AZ_BIN="$TMP/bin/az" \
   KUBECTL_BIN="$TMP/bin/kubectl" \
   HELM_BIN="$TMP/bin/helm" \
   AZ_MODE=success \
-  KUBECTL_MODE=hang-nodepool \
+  KUBECTL_MODE=hang-image-cache-delete \
   CLUSTER_CLEANUP_TIMEOUT_SECONDS=1 \
-  NAP_ZERO_POLL_INTERVAL_SECONDS=0 \
   "$ROOT/scripts/cleanup.sh" \
   --resource-group rg-test \
   --ondemand-namespace vn2-ondemand \
   --standby-namespace vn2-standby \
   --yes 2>&1)"
-hanging_kubectl_status=$?
+hanging_image_cache_status=$?
 set -e
 
-[[ "$hanging_kubectl_status" -eq 0 ]]
-grep -F 'delete NodePool workshop-nap:' <<<"$hanging_kubectl_output" >/dev/null
-grep -F 'Cleanup completed with warnings.' <<<"$hanging_kubectl_output" >/dev/null
+[[ "$hanging_image_cache_status" -eq 0 ]]
+grep -F 'delete namespace vn2-image-cache: timed out after 1s' <<<"$hanging_image_cache_output" >/dev/null
+grep -F 'Cleanup completed with warnings.' <<<"$hanging_image_cache_output" >/dev/null
 grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
-
-rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
-set +e
-hanging_nodeclaims_output="$(timeout 5s env \
-  TEST_LOG_DIR="$TMP/logs" \
-  AZ_STATE_DIR="$TMP/state" \
-  AZ_BIN="$TMP/bin/az" \
-  KUBECTL_BIN="$TMP/bin/kubectl" \
-  HELM_BIN="$TMP/bin/helm" \
-  AZ_MODE=success \
-  KUBECTL_MODE=hang-nodeclaims \
-  CLUSTER_CLEANUP_TIMEOUT_SECONDS=1 \
-  NAP_ZERO_POLL_INTERVAL_SECONDS=0 \
-  "$ROOT/scripts/cleanup.sh" \
-  --resource-group rg-test \
-  --ondemand-namespace vn2-ondemand \
-  --standby-namespace vn2-standby \
-  --yes 2>&1)"
-hanging_nodeclaims_status=$?
-set -e
-
-[[ "$hanging_nodeclaims_status" -eq 0 ]]
-grep -F 'observe NodeClaim 0 for workshop-nap:' <<<"$hanging_nodeclaims_output" >/dev/null
-grep -F 'Cleanup completed with warnings.' <<<"$hanging_nodeclaims_output" >/dev/null
-grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
-
-rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
-set +e
-remaining_nodeclaims_output="$(timeout 5s env \
-  TEST_LOG_DIR="$TMP/logs" \
-  AZ_STATE_DIR="$TMP/state" \
-  AZ_BIN="$TMP/bin/az" \
-  KUBECTL_BIN="$TMP/bin/kubectl" \
-  HELM_BIN="$TMP/bin/helm" \
-  AZ_MODE=success \
-  KUBECTL_MODE=nodeclaims-remain \
-  CLUSTER_CLEANUP_TIMEOUT_SECONDS=1 \
-  NAP_ZERO_POLL_INTERVAL_SECONDS=30 \
-  "$ROOT/scripts/cleanup.sh" \
-  --resource-group rg-test \
-  --ondemand-namespace vn2-ondemand \
-  --standby-namespace vn2-standby \
-  --yes 2>&1)"
-remaining_nodeclaims_status=$?
-set -e
-
-[[ "$remaining_nodeclaims_status" -eq 0 ]]
-grep -F 'observe NodeClaim 0 for workshop-nap:' <<<"$remaining_nodeclaims_output" >/dev/null
-grep -F 'Cleanup completed with warnings.' <<<"$remaining_nodeclaims_output" >/dev/null
-grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -452,8 +404,8 @@ set -e
 
 [[ "$cluster_unreachable_status" -eq 0 ]]
 grep -F 'WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.' <<<"$cluster_unreachable_output" >/dev/null
-grep -F 'discover benchmark namespaces with prefix vn2-bench-: The connection to the server localhost:6443 was refused' <<<"$cluster_unreachable_output" >/dev/null
-grep -F 'delete NodePool workshop-nap: The connection to the server localhost:6443 was refused' <<<"$cluster_unreachable_output" >/dev/null
+grep -F 'discover hands-on namespaces with prefix vn2-hands-on-: The connection to the server localhost:6443 was refused' <<<"$cluster_unreachable_output" >/dev/null
+grep -F 'delete namespace vn2-image-cache: The connection to the server localhost:6443 was refused' <<<"$cluster_unreachable_output" >/dev/null
 grep -F 'uninstall Helm release vn2-standby: Kubernetes cluster unreachable' <<<"$cluster_unreachable_output" >/dev/null
 grep -F 'Cleanup completed with warnings.' <<<"$cluster_unreachable_output" >/dev/null
 python3 - "$TMP/logs/commands.log" <<'PY'
@@ -466,9 +418,6 @@ expected = [
     "az group show --name rg-test --query name --output tsv",
     'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
@@ -479,6 +428,7 @@ expected = [
 if lines != expected:
     raise SystemExit(f"unexpected cluster-unreachable command order: {lines!r}")
 PY
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -505,12 +455,9 @@ expected = [
     "az group exists --name rg-test",
     "az group show --name rg-test --query name --output tsv",
     'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
-    "kubectl delete namespace vn2-bench-aks-nap-r1-111 --ignore-not-found=true --wait=false",
-    "kubectl delete namespace vn2-bench-vn2-ondemand-r2-222 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-hands-on-ondemand-r1-111 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-hands-on-standby-cached-r2-222 --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
@@ -521,6 +468,8 @@ expected = [
 if lines != expected:
     raise SystemExit(f"unexpected pool-delete-fails command order: {lines!r}")
 PY
+assert_only_hands_on_namespace_deletes "$TMP/logs/commands.log"
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -538,6 +487,8 @@ set -e
 grep -F 'WARNING: failed to discover standby pools in rg-test: standby pool list boom' <<<"$pool_list_failure_output" >/dev/null
 grep -F 'Cleanup completed with warnings.' <<<"$pool_list_failure_output" >/dev/null
 grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
+assert_only_hands_on_namespace_deletes "$TMP/logs/commands.log"
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -561,6 +512,8 @@ set -e
 grep -F 'WARNING: standby pool deletion timed out for standby-pool-a after 1s; continuing with resource group deletion because the resource group delete can remove child resources.' <<<"$hanging_pool_delete_output" >/dev/null
 grep -F 'Cleanup completed with warnings.' <<<"$hanging_pool_delete_output" >/dev/null
 grep -F 'az group delete --name rg-test --yes --no-wait' "$TMP/logs/commands.log" >/dev/null
+assert_only_hands_on_namespace_deletes "$TMP/logs/commands.log"
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 missing_output="$(run_cleanup \
@@ -646,6 +599,7 @@ expected = [
 if lines != expected:
     raise SystemExit(f"unexpected prompt command order: {lines!r}")
 PY
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 env_output="$(run_cleanup \
@@ -655,6 +609,8 @@ env_output="$(run_cleanup \
   --yes)"
 
 grep -F 'Cleanup completed.' <<<"$env_output" >/dev/null
+assert_only_hands_on_namespace_deletes "$TMP/logs/commands.log"
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -684,12 +640,9 @@ expected = [
     "az group exists --name rg-test",
     "az group show --name rg-test --query name --output tsv",
     'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
-    "kubectl delete namespace vn2-bench-aks-nap-r1-111 --ignore-not-found=true --wait=false",
-    "kubectl delete namespace vn2-bench-vn2-ondemand-r2-222 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-hands-on-ondemand-r1-111 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-hands-on-standby-cached-r2-222 --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
@@ -701,6 +654,8 @@ expected = [
 if lines != expected:
     raise SystemExit(f"unexpected stuck command order: {lines!r}")
 PY
+assert_only_hands_on_namespace_deletes "$TMP/logs/commands.log"
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
 
 rm -f "$TMP/logs/commands.log" "$TMP/state/group-exists-count"
 set +e
@@ -728,12 +683,9 @@ expected = [
     "az group exists --name rg-test",
     "az group show --name rg-test --query name --output tsv",
     'kubectl get namespaces -o jsonpath={range .items[*]}{.metadata.name}{"\\n"}{end}',
-    "kubectl delete namespace vn2-bench-aks-nap-r1-111 --ignore-not-found=true --wait=false",
-    "kubectl delete namespace vn2-bench-vn2-ondemand-r2-222 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-hands-on-ondemand-r1-111 --ignore-not-found=true --wait=false",
+    "kubectl delete namespace vn2-hands-on-standby-cached-r2-222 --ignore-not-found=true --wait=false",
     "kubectl delete namespace vn2-image-cache --ignore-not-found=true --wait=false",
-    "kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false",
-    "kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name",
     "helm uninstall vn2-standby --namespace vn2-standby --ignore-not-found",
     "helm uninstall vn2-ondemand --namespace vn2-ondemand --ignore-not-found",
     "az standby-container-group-pool list --resource-group rg-test --query [].name --output tsv",
@@ -745,3 +697,7 @@ expected = [
 if lines != expected:
     raise SystemExit(f"unexpected poll-error command order: {lines!r}")
 PY
+assert_only_hands_on_namespace_deletes "$TMP/logs/commands.log"
+assert_no_nap_cleanup_commands "$TMP/logs/commands.log"
+
+echo 'PASS: cleanup remains billing-safe without NAP benchmark resources'

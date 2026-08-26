@@ -8,7 +8,6 @@ POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-10}"
 DELETE_TIMEOUT_SECONDS="${DELETE_TIMEOUT_SECONDS:-1200}"
 CLUSTER_CLEANUP_TIMEOUT_SECONDS="${CLUSTER_CLEANUP_TIMEOUT_SECONDS:-30}"
 STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS="${STANDBY_POOL_CLEANUP_TIMEOUT_SECONDS:-30}"
-NAP_ZERO_POLL_INTERVAL_SECONDS="${NAP_ZERO_POLL_INTERVAL_SECONDS:-2}"
 
 resource_group="${RESOURCE_GROUP:-${RG:-}}"
 ondemand_namespace="${ONDEMAND_NAMESPACE:-vn2-ondemand}"
@@ -259,7 +258,7 @@ run_tolerant_bounded() {
   fi
 }
 
-sweep_benchmark_namespaces() {
+sweep_hands_on_namespaces() {
   local started_at output status elapsed remaining namespace
   started_at="$SECONDS"
 
@@ -271,23 +270,23 @@ sweep_benchmark_namespaces() {
   set -e
 
   if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
-    operation_failures+=("discover benchmark namespaces with prefix vn2-bench-: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s")
+    operation_failures+=("discover hands-on namespaces with prefix vn2-hands-on-: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s")
     return
   fi
   if [[ "$status" -ne 0 ]]; then
-    operation_failures+=("discover benchmark namespaces with prefix vn2-bench-: ${output:-command failed}")
+    operation_failures+=("discover hands-on namespaces with prefix vn2-hands-on-: ${output:-command failed}")
     return
   fi
 
   while IFS= read -r namespace; do
-    if [[ "$namespace" != vn2-bench-* ]]; then
+    if [[ "$namespace" != vn2-hands-on-* ]]; then
       continue
     fi
 
     elapsed=$((SECONDS - started_at))
     remaining=$((CLUSTER_CLEANUP_TIMEOUT_SECONDS - elapsed))
     if ((remaining <= 0)); then
-      operation_failures+=("benchmark namespace sweep: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s before deleting remaining namespaces")
+      operation_failures+=("hands-on namespace sweep: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s before deleting remaining namespaces")
       return
     fi
 
@@ -304,52 +303,6 @@ sweep_benchmark_namespaces() {
       operation_failures+=("delete namespace $namespace: ${output:-command failed}")
     fi
   done <<<"$output"
-}
-
-observe_nodeclaims_zero() {
-  local started_at output status elapsed remaining sleep_seconds
-  started_at="$SECONDS"
-
-  while true; do
-    elapsed=$((SECONDS - started_at))
-    remaining=$((CLUSTER_CLEANUP_TIMEOUT_SECONDS - elapsed))
-    if ((remaining <= 0)); then
-      operation_failures+=("observe NodeClaim 0 for workshop-nap: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s")
-      return
-    fi
-
-    set +e
-    output="$(timeout --signal=KILL "${remaining}s" \
-      "$KUBECTL_BIN" get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name 2>&1)"
-    status=$?
-    set -e
-
-    if [[ "$status" -eq 124 || "$status" -eq 137 ]]; then
-      operation_failures+=("observe NodeClaim 0 for workshop-nap: timed out after ${CLUSTER_CLEANUP_TIMEOUT_SECONDS}s")
-      return
-    fi
-    if [[ "$status" -ne 0 ]]; then
-      operation_failures+=("observe NodeClaim 0 for workshop-nap: ${output:-command failed}")
-      return
-    fi
-    if [[ -z "$output" ]]; then
-      return
-    fi
-
-    elapsed=$((SECONDS - started_at))
-    if ((elapsed >= CLUSTER_CLEANUP_TIMEOUT_SECONDS)); then
-      operation_failures+=("observe NodeClaim 0 for workshop-nap: remaining NodeClaims: $output")
-      return
-    fi
-    remaining=$((CLUSTER_CLEANUP_TIMEOUT_SECONDS - elapsed))
-    sleep_seconds="$NAP_ZERO_POLL_INTERVAL_SECONDS"
-    if ((sleep_seconds > remaining)); then
-      sleep_seconds="$remaining"
-    fi
-    if ((sleep_seconds > 0)); then
-      sleep "$sleep_seconds"
-    fi
-  done
 }
 
 prompt_for_confirmation() {
@@ -415,15 +368,9 @@ if [[ "$assume_yes" != "true" ]]; then
   prompt_for_confirmation "${standby_pools[@]}"
 fi
 
-sweep_benchmark_namespaces
+sweep_hands_on_namespaces
 run_tolerant_bounded "delete namespace vn2-image-cache" \
   "$KUBECTL_BIN" delete namespace vn2-image-cache --ignore-not-found=true --wait=false
-run_tolerant_bounded "delete NodePool workshop-nap" \
-  "$KUBECTL_BIN" delete nodepool workshop-nap --ignore-not-found=true --wait=false
-run_tolerant_bounded "delete AKSNodeClass workshop-nap" \
-  "$KUBECTL_BIN" delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false
-
-observe_nodeclaims_zero
 
 run_tolerant_bounded "uninstall Helm release $standby_release" \
   "$HELM_BIN" uninstall "$standby_release" --namespace "$standby_namespace" --ignore-not-found

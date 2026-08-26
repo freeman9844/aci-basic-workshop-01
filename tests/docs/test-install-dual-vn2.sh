@@ -4,11 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 python3 - "$ROOT" <<'PY'
-import sys
 import re
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -19,6 +19,27 @@ if not module.exists():
 
 text = module.read_text(encoding="utf-8")
 
+foundation_keys = [
+    "LOCATION",
+    "RG",
+    "VNET",
+    "AKS_SUBNET",
+    "CG_SUBNET",
+    "NAT_NAME",
+    "NAT_PIP_NAME",
+    "AKS",
+    "VM_SIZE",
+    "AKS_IDENTITY",
+    "AKS_IDENTITY_ID",
+    "K8S_VERSION",
+]
+release_keys = foundation_keys + [
+    "VN2_CHART_VERSION",
+    "ONDEMAND_RELEASE",
+    "STANDBY_RELEASE",
+]
+final_keys = release_keys + ["STANDBY_POOL"]
+
 required_strings = [
     "1.3410.26081102",
     "vn2-ondemand",
@@ -27,10 +48,11 @@ required_strings = [
     "if [[ ! -f \"$WORKSHOP_STATE\" ]]; then",
     "source \"$WORKSHOP_STATE\"",
     "az aks get-credentials --resource-group \"$RG\" --name \"$AKS\" --overwrite-existing",
+    ": \"${RG:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
+    ": \"${AKS:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
+    ": \"${CG_SUBNET:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
     ": \"${AKS_IDENTITY:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
     ": \"${AKS_IDENTITY_ID:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
-    ": \"${NAP_VM_SIZE:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
-    ": \"${NAP_NODEPOOL:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
     "--namespace vn2-ondemand",
     "--namespace vn2-standby",
     "--create-namespace",
@@ -40,11 +62,12 @@ required_strings = [
     "standbyPoolShareType=Node",
     "standbyPool.standbyPoolsCpu=1",
     "standbyPool.standbyPoolsMemory=2",
-    "standbyPool.maxReadyCapacity=5",
+    "standbyPool.maxReadyCapacity=1",
+    "standbyPool.refillPolicy=always",
     "benchmark-path=ondemand",
     "benchmark-path=standby",
-    "세 가지 node path",
-    "네 가지 benchmark scenario",
+    "두 가지 VN2 node path",
+    "세 가지 hands-on exercise",
     "image cache",
     "pool 상태",
     "cluster-scoped",
@@ -90,8 +113,6 @@ required_strings = [
     "printf 'export VM_SIZE=%q\\n' \"$VM_SIZE\"",
     "printf 'export AKS_IDENTITY=%q\\n' \"$AKS_IDENTITY\"",
     "printf 'export AKS_IDENTITY_ID=%q\\n' \"$AKS_IDENTITY_ID\"",
-    "printf 'export NAP_VM_SIZE=%q\\n' \"$NAP_VM_SIZE\"",
-    "printf 'export NAP_NODEPOOL=%q\\n' \"$NAP_NODEPOOL\"",
     "printf 'export K8S_VERSION=%q\\n' \"$K8S_VERSION\"",
     "printf 'export VN2_CHART_VERSION=%q\\n' \"$VN2_CHART_VERSION\"",
     "printf 'export ONDEMAND_RELEASE=%q\\n' \"$ONDEMAND_RELEASE\"",
@@ -102,14 +123,12 @@ required_strings = [
     "./scripts/check-standby-pool.sh \\",
     "--resource-group \"$RG\"",
     "--name \"$STANDBY_POOL\"",
-    "--expect-running 5",
+    "--expect-running 1",
     "--timeout-seconds 1200",
     "--interval-seconds 15",
     "16-vCPU/64-GiB",
     "fixed system node",
     "두 VN2 infrastructure release",
-    "NAP benchmark NodePool은 0개 node에서 시작",
-    "karpenter.sh/nodepool=workshop-nap",
     "duplicate webhook ownership",
     "rejected 1 vCPU/2 GiB profile",
     "missing RBAC",
@@ -131,6 +150,14 @@ forbidden_strings = [
     "같은 Cloud Shell 세션에 남아 있다",
     ">> \"$WORKSHOP_STATE\"",
     "tee -a \"$WORKSHOP_STATE\"",
+    "NAP_VM_SIZE",
+    "NAP_NODEPOOL",
+    "workshop-nap",
+    "karpenter.sh/nodepool",
+    "check-nap-capacity.sh",
+    "standbyPool.maxReadyCapacity=5",
+    "--expect-running 5",
+    "네 가지 benchmark scenario",
     "일반 AKS 노드에 `" + stale_aks_path + "`",
 ]
 
@@ -152,6 +179,7 @@ for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", 
 if "다음 모듈에서 그대로 재사용" not in text:
     raise SystemExit("docs/03-install-dual-vn2.md must say STANDBY_POOL continues into the next module")
 
+
 def extract_first_bash_block(step_heading: str) -> str:
     section_match = re.search(
         rf"{re.escape(step_heading)}\n(.*?)(?=\n### \d+\)|\n## 완료 체크포인트)",
@@ -168,6 +196,18 @@ def extract_first_bash_block(step_heading: str) -> str:
     return block_match.group(1)
 
 
+def assert_exact_exports(state_text: str, keys: list[str], step_label: str) -> None:
+    export_lines = [line for line in state_text.splitlines() if line.startswith("export ")]
+    if len(export_lines) != len(keys):
+        raise SystemExit(
+            f"{step_label} must leave exactly {len(keys)} exported keys, found {len(export_lines)}"
+        )
+
+    for key in keys:
+        if state_text.count(f"export {key}=") != 1:
+            raise SystemExit(f"{step_label} must leave exactly one export for {key}")
+
+
 step1_block = extract_first_bash_block("### 1) Module 02 state file 과 AKS context 연속성 확인")
 recovery_scratch = root / ".test-doc-install-dual-vn2-recovery"
 if recovery_scratch.exists():
@@ -179,25 +219,19 @@ try:
     fake_bin = recovery_scratch / "bin"
     fake_bin.mkdir(parents=True)
     (workshop / "results").mkdir(parents=True)
-    (workshop / "scripts").mkdir()
     (workshop / "results" / "workshop.env").write_text(
         "\n".join(
             [
-                "export RG='rg-vn2-bench-10001'",
-                "export AKS='aks-vn2-bench'",
+                "export RG='rg-vn2-hands-on-10001'",
+                "export AKS='aks-vn2-hands-on'",
                 "export CG_SUBNET='cg'",
-                "export AKS_IDENTITY='id-aks-vn2-bench'",
-                "export AKS_IDENTITY_ID='/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-bench'",
-                "export NAP_VM_SIZE='Standard_D4s_v5'",
-                "export NAP_NODEPOOL='workshop-nap'",
+                "export AKS_IDENTITY='id-aks-vn2-hands-on'",
+                "export AKS_IDENTITY_ID='/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-hands-on'",
                 "",
             ]
         ),
         encoding="utf-8",
     )
-    checker = workshop / "scripts" / "check-nap-capacity.sh"
-    checker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
-    checker.chmod(0o755)
     fake_az = fake_bin / "az"
     fake_az.write_text("#!/usr/bin/env bash\nexit 42\n", encoding="utf-8")
     fake_az.chmod(0o755)
@@ -238,18 +272,16 @@ try:
         "\n".join(
             [
                 "export LOCATION='koreacentral'",
-                "export RG='rg-vn2-bench-10001'",
-                "export VNET='vnet-vn2-bench'",
+                "export RG='rg-vn2-hands-on-10001'",
+                "export VNET='vnet-vn2-hands-on'",
                 "export AKS_SUBNET='snet-aks'",
                 "export CG_SUBNET='cg'",
-                "export NAT_NAME='nat-vn2-bench'",
-                "export NAT_PIP_NAME='pip-vn2-bench'",
-                "export AKS='aks-vn2-bench'",
+                "export NAT_NAME='nat-vn2-hands-on'",
+                "export NAT_PIP_NAME='pip-vn2-hands-on'",
+                "export AKS='aks-vn2-hands-on'",
                 "export VM_SIZE='Standard_D16s_v5'",
-                "export AKS_IDENTITY='id-aks-vn2-bench'",
-                "export AKS_IDENTITY_ID='/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-bench'",
-                "export NAP_VM_SIZE='Standard_D4s_v5'",
-                "export NAP_NODEPOOL='workshop-nap'",
+                "export AKS_IDENTITY='id-aks-vn2-hands-on'",
+                "export AKS_IDENTITY_ID='/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-hands-on'",
                 "export K8S_VERSION='1.34.12'",
                 "export VN2_CHART_VERSION='stale-chart'",
                 "export ONDEMAND_RELEASE='stale-ondemand'",
@@ -290,27 +322,7 @@ try:
     )
 
     state_text = state_path.read_text(encoding="utf-8")
-    for key in {
-        "LOCATION",
-        "RG",
-        "VNET",
-        "AKS_SUBNET",
-        "CG_SUBNET",
-        "NAT_NAME",
-        "NAT_PIP_NAME",
-        "AKS",
-        "VM_SIZE",
-        "AKS_IDENTITY",
-        "AKS_IDENTITY_ID",
-        "NAP_VM_SIZE",
-        "NAP_NODEPOOL",
-        "K8S_VERSION",
-        "VN2_CHART_VERSION",
-        "ONDEMAND_RELEASE",
-        "STANDBY_RELEASE",
-    }:
-        if state_text.count(f"export {key}=") != 1:
-            raise SystemExit(f"Step 2 must leave exactly one export for {key}")
+    assert_exact_exports(state_text, release_keys, "Step 2")
 
     for stale in ("stale-chart", "stale-ondemand", "stale-standby", "stale-pool"):
         if stale in state_text:
@@ -338,18 +350,16 @@ try:
                     ': "${ONDEMAND_RELEASE:?missing ONDEMAND_RELEASE}"',
                     ': "${STANDBY_RELEASE:?missing STANDBY_RELEASE}"',
                     '[[ "$LOCATION" == "koreacentral" ]]',
-                    '[[ "$RG" == "rg-vn2-bench-10001" ]]',
-                    '[[ "$VNET" == "vnet-vn2-bench" ]]',
+                    '[[ "$RG" == "rg-vn2-hands-on-10001" ]]',
+                    '[[ "$VNET" == "vnet-vn2-hands-on" ]]',
                     '[[ "$AKS_SUBNET" == "snet-aks" ]]',
                     '[[ "$CG_SUBNET" == "cg" ]]',
-                    '[[ "$NAT_NAME" == "nat-vn2-bench" ]]',
-                    '[[ "$NAT_PIP_NAME" == "pip-vn2-bench" ]]',
-                    '[[ "$AKS" == "aks-vn2-bench" ]]',
+                    '[[ "$NAT_NAME" == "nat-vn2-hands-on" ]]',
+                    '[[ "$NAT_PIP_NAME" == "pip-vn2-hands-on" ]]',
+                    '[[ "$AKS" == "aks-vn2-hands-on" ]]',
                     '[[ "$VM_SIZE" == "Standard_D16s_v5" ]]',
-                    '[[ "$AKS_IDENTITY" == "id-aks-vn2-bench" ]]',
-                    '[[ "$AKS_IDENTITY_ID" == "/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-bench" ]]',
-                    '[[ "$NAP_VM_SIZE" == "Standard_D4s_v5" ]]',
-                    '[[ "$NAP_NODEPOOL" == "workshop-nap" ]]',
+                    '[[ "$AKS_IDENTITY" == "id-aks-vn2-hands-on" ]]',
+                    '[[ "$AKS_IDENTITY_ID" == "/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-hands-on" ]]',
                     '[[ "$K8S_VERSION" == "1.34.12" ]]',
                     '[[ "$VN2_CHART_VERSION" == "1.3410.26081102" ]]',
                     '[[ "$ONDEMAND_RELEASE" == "vn2-ondemand" ]]',
@@ -369,4 +379,116 @@ finally:
     if scratch.exists():
         shutil.rmtree(scratch)
 
+step6_block = extract_first_bash_block("### 6) standby pool 하나를 정확히 찾고 `STANDBY_POOL` export")
+pool_scratch = root / ".test-doc-install-dual-vn2-pool"
+if pool_scratch.exists():
+    shutil.rmtree(pool_scratch)
+
+try:
+    fake_bin = pool_scratch / "bin"
+    fake_bin.mkdir(parents=True)
+    (pool_scratch / "results").mkdir(parents=True)
+    state_path = pool_scratch / "results" / "workshop.env"
+    state_path.write_text(
+        "\n".join(
+            [
+                "export LOCATION='koreacentral'",
+                "export RG='rg-vn2-hands-on-10001'",
+                "export VNET='vnet-vn2-hands-on'",
+                "export AKS_SUBNET='snet-aks'",
+                "export CG_SUBNET='cg'",
+                "export NAT_NAME='nat-vn2-hands-on'",
+                "export NAT_PIP_NAME='pip-vn2-hands-on'",
+                "export AKS='aks-vn2-hands-on'",
+                "export VM_SIZE='Standard_D16s_v5'",
+                "export AKS_IDENTITY='id-aks-vn2-hands-on'",
+                "export AKS_IDENTITY_ID='/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-hands-on'",
+                "export K8S_VERSION='1.34.12'",
+                "export VN2_CHART_VERSION='1.3410.26081102'",
+                "export ONDEMAND_RELEASE='vn2-ondemand'",
+                "export STANDBY_RELEASE='vn2-standby'",
+                "export STANDBY_POOL='stale-pool'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fake_az = fake_bin / "az"
+    fake_az.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "if [[ \"${1:-}\" == \"standby-container-group-pool\" && \"${2:-}\" == \"list\" ]]; then\n"
+        "  printf 'pool-vn2-ready\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'unexpected az call: %s\\n' \"$*\" >&2\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_az.chmod(0o755)
+
+    pool_result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    "umask 0022",
+                    'before="$(umask)"',
+                    step6_block,
+                    'after="$(umask)"',
+                    'if [[ "$after" != "$before" ]]; then',
+                    '  printf "step 6 changed parent umask from %s to %s\\n" "$before" "$after" >&2',
+                    "  exit 1",
+                    "fi",
+                ]
+            ),
+        ],
+        check=True,
+        cwd=pool_scratch,
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    if "STANDBY_POOL=pool-vn2-ready" not in pool_result.stdout:
+        raise SystemExit("Step 6 must print the discovered STANDBY_POOL value")
+
+    state_text = state_path.read_text(encoding="utf-8")
+    assert_exact_exports(state_text, final_keys, "Step 6")
+
+    if "stale-pool" in state_text:
+        raise SystemExit("Step 6 must replace stale STANDBY_POOL state")
+
+    file_mode = stat.S_IMODE(state_path.stat().st_mode)
+    if file_mode != 0o600:
+        raise SystemExit(f"Step 6 must leave results/workshop.env mode 600, found {oct(file_mode)}")
+
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    "source results/workshop.env",
+                    ': "${STANDBY_POOL:?missing STANDBY_POOL}"',
+                    '[[ "$RG" == "rg-vn2-hands-on-10001" ]]',
+                    '[[ "$VN2_CHART_VERSION" == "1.3410.26081102" ]]',
+                    '[[ "$ONDEMAND_RELEASE" == "vn2-ondemand" ]]',
+                    '[[ "$STANDBY_RELEASE" == "vn2-standby" ]]',
+                    '[[ "$STANDBY_POOL" == "pool-vn2-ready" ]]',
+                ]
+            ),
+        ],
+        check=True,
+        cwd=pool_scratch,
+        text=True,
+    )
+finally:
+    if pool_scratch.exists():
+        shutil.rmtree(pool_scratch)
+
+print("PASS: install dual VN2 doc matches the one-capacity ready standby flow")
 PY

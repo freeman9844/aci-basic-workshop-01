@@ -13,8 +13,10 @@ class RehearsalReferenceTest(unittest.TestCase):
     def setUpClass(cls):
         cls.reference = json.loads(REFERENCE_JSON.read_text(encoding="utf-8"))
         cls.markdown = REFERENCE_MARKDOWN.read_text(encoding="utf-8")
+        cls.appendix = (
+            ROOT / "docs/appendix/performance-benchmark.md"
+        ).read_text(encoding="utf-8")
         cls.readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        cls.module06 = (ROOT / "docs/06-analyze-results.md").read_text(encoding="utf-8")
 
     def test_records_live_environment_and_four_scenarios(self):
         expected = {
@@ -130,29 +132,37 @@ class RehearsalReferenceTest(unittest.TestCase):
         ):
             self.assertIn(required, self.markdown)
 
-    def test_participant_docs_link_current_reference_without_old_warm_aks_claims(self):
-        markdown_link = (
-            "[Korea Central 2026-08-23 live rehearsal reference]"
-            "(docs/reference/korea-central-2026-08-23.md)"
-        )
-        json_link = (
-            "[reference JSON]"
-            "(docs/reference/korea-central-2026-08-23.json)"
-        )
-        self.assertIn(markdown_link, self.readme)
-        self.assertIn(json_link, self.readme)
+    def test_appendix_owns_historical_reference_boundary_without_old_warm_aks_claims(self):
         self.assertIn(
-            "[Korea Central 2026-08-23 live rehearsal reference]"
-            "(./reference/korea-central-2026-08-23.md)",
-            self.module06,
+            "[선택 사항: 과거 성능 benchmark](docs/appendix/performance-benchmark.md)",
+            self.readme,
+        )
+        self.assertNotIn("Korea Central 2026-08-23 live rehearsal reference", self.readme)
+        self.assertNotIn("docs/reference/korea-central-2026-08-23.md", self.readme)
+        self.assertNotIn("docs/reference/korea-central-2026-08-23.json", self.readme)
+
+        self.assertIn("120분 hands-on workshop에 필요하지 않습니다", self.appendix)
+        self.assertIn("historical appendix에서만 참조합니다.", self.appendix)
+        self.assertIn(
+            "[Markdown](../reference/korea-central-2026-08-23.md)",
+            self.appendix,
         )
         self.assertIn(
-            "[reference JSON](./reference/korea-central-2026-08-23.json)",
-            self.module06,
+            "[JSON](../reference/korea-central-2026-08-23.json)",
+            self.appendix,
+        )
+        self.assertIn(
+            "[reference JSON](./korea-central-2026-08-23.json)",
+            self.markdown,
         )
 
         active_text = "\n".join(
-            (self.readme, self.module06, self.markdown, json.dumps(self.reference))
+            (
+                self.readme,
+                self.appendix,
+                self.markdown,
+                json.dumps(self.reference, ensure_ascii=False),
+            )
         )
         for stale_claim in (
             "Pod median 9.796배",

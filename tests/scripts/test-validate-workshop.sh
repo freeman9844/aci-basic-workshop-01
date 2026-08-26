@@ -37,7 +37,7 @@ required_lines = [
     'run_step "Appendix: Running summarizer unit tests" python3 -m unittest tests.test_summarize_results -v',
     'run_step "Appendix: Running NAP capacity checker tests" bash tests/scripts/test-check-nap-capacity.sh',
     'run_step "Appendix: Running NAP template manifest tests" bash tests/manifests/test-nap-workshop-template.sh',
-    'run_step "Appendix: Running historical rehearsal reference tests" python3 - "$ROOT" <<\'PY\'',
+    'run_step "Appendix: Running historical rehearsal reference tests" python3 -m unittest tests.test_rehearsal_reference -v',
     "printf 'PASS: complete ACI VN2 hands-on workshop validation\\n'",
 ]
 for required in required_lines:
@@ -49,6 +49,8 @@ for removed in (
     "test-analysis-cleanup.sh",
     "python3 -m unittest discover -s tests -p 'test_*.py' -v",
     "PASS: complete ACI VN2 performance workshop validation",
+    "PASS: historical rehearsal reference appendix contract",
+    "Historical scenario set mismatch:",
 ):
     if removed in validator_text:
         raise SystemExit(f"Validator still contains stale text: {removed}")

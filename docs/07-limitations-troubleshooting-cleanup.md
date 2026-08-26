@@ -1,16 +1,17 @@
-# 07. 제약, 트러블슈팅, 정리
+# 07. 회고와 cleanup
 
-> 지원 범위, 대표 failure evidence, fresh-session recovery, billing-critical cleanup 기준을 한곳에서 마무리합니다.
+> 세 가지 observation JSON을 질적으로 review하고, exact RG만 사용해 billing-safe cleanup까지 마무리합니다.
 
 
 ## 목표
 
 이 모듈을 완료하면 다음을 할 수 있습니다.
 
-- 지원하지 않는 범위와 해석 제한을 실제 troubleshooting evidence와 연결해 설명할 수 있습니다.
-- `results/workshop.env` 기반 recovery 와 missing state file fallback 을 안전하게 구분할 수 있습니다.
-- `scripts/cleanup.sh --resource-group "$RG" --yes` 와 residual resource IDs evidence를 사용해 cleanup를 완료할 수 있습니다.
-- billing-critical RG deletion 경고를 숨기지 않고 그대로 보존할 수 있습니다.
+- `results/observations/vn2-ondemand.json`, `results/observations/vn2-standby.json`, `results/observations/vn2-standby-cached.json`을 같은 형식으로 읽을 수 있습니다.
+- 세 경로를 `경로`, `관찰 시간`, `lifecycle에서 확인한 점`, `증적 경로` 네 칸으로 정리할 수 있습니다.
+- `results/workshop.env`와 fresh Cloud Shell recovery fallback을 구분해 exact RG를 다시 잡을 수 있습니다.
+- `scripts/cleanup.sh --resource-group "$RG" --yes`와 `az group exists --name "$RG"`로 전체 삭제를 검증할 수 있습니다.
+- VN2, standby health, ImagePull, quota, NAT Gateway 관련 증적을 Module 04-06의 evidence에서 다시 찾을 수 있습니다.
 
 ## 예상 소요 시간
 
@@ -18,9 +19,10 @@
 
 ## 시작 전 상태
 
-- Module 06까지 끝나서 `results/summary.json`, `results/summary.csv`, `results/summary.md` 와 raw/diagnostics evidence 가 모두 남아 있다.
-- 가능하면 `results/workshop.env` 가 남아 있고, fresh Cloud Shell 에서도 다시 source 할 수 있다.
-- `RG` 와 `STANDBY_POOL` 은 살아 있는 쉘 메모리보다 `results/workshop.env` 에 저장된 값이 기준이다.
+- Module 06까지 끝나 `results/observations/` 아래 세 개의 observation JSON이 남아 있다.
+- `results/evidence/` 아래에 `vn2-ondemand-*`, `vn2-standby-*`, `vn2-standby-cached-*` 증적 디렉터리가 남아 있다.
+- 가능하면 `results/workshop.env`가 남아 있고, same shell 또는 fresh Cloud Shell session에서 다시 source 할 수 있다.
+- cleanup 전에 exact RG를 기억으로 추측하지 않고 파일과 증적으로 다시 확인할 준비가 되어 있다.
 
 
 ## 태그 범례
@@ -30,23 +32,25 @@
 | 🟢 **실행** | 참가자가 직접 입력하거나 수행해야 하는 단계 |
 | 👁️ **설명** | 왜 이 단계를 하는지 이해하기 위한 읽기 전용 안내 |
 | 📋 **예상 출력** | 실행 결과와 비교할 기준 출력 |
-| ⚠️ **주의** | 비용, 순서, 안전성, 계약 조건 안내 |
+| ⚠️ **주의** | 비용, 순서, 안전성, 해석 제한 안내 |
 
 
 ## 진행 순서
 
-1. hard limitations 와 범위 제외를 먼저 확인합니다.
-2. exact RG를 기준으로 cleanup를 실행하고, `az group exists` 와 residual resource IDs evidence를 확인합니다.
-3. fresh Cloud Shell recovery 와 missing state file fallback 절차를 마지막까지 정리합니다.
+1. 세 개의 observation JSON을 같은 형식으로 읽습니다.
+2. 세 줄 worksheet에 관찰 결과와 evidence 경로를 옮깁니다.
+3. 값의 해석 경계와 트러블슈팅 포인트를 정리합니다.
+4. exact RG cleanup를 실행하고 `false`를 확인합니다.
+5. fresh Cloud Shell recovery와 missing state file fallback을 정리합니다.
 
 ## 0. 세션 재연결 시 상태 복구 (선택)
 
 <details>
-<summary>fresh Cloud Shell에서 cleanup 대상 RG를 다시 확인하는 명령 보기</summary>
+<summary>fresh Cloud Shell recovery로 exact RG를 다시 불러오는 명령 보기</summary>
 
 👁️ **설명**
 
-cleanup 단계는 exact RG 하나를 정확히 다시 잡는 것이 핵심입니다. 새 Cloud Shell에서는 먼저 state file을 source하고, 값이 없다면 이 문서의 fallback 절차로만 복구합니다.
+같은 shell을 계속 쓰고 있다면 이 절은 건너뜁니다. fresh Cloud Shell session에서는 먼저 기존 state file을 source 하고, 값이 비어 있거나 파일이 없을 때만 이 문서의 fallback 절차를 사용합니다.
 
 🟢 **실행**
 
@@ -58,8 +62,8 @@ printf 'RG=%s\n' "$RG"
 
 📋 **예상 출력**
 
-- cleanup 대상 RG 하나만 다시 확인됩니다.
-- 값이 비어 있으면 wildcard를 쓰지 말고 3단계 fallback 절차로 exact RG를 먼저 복구합니다.
+- cleanup 대상 exact RG 하나만 다시 보입니다.
+- 값이 비어 있으면 wildcard를 쓰지 말고 5단계 fallback으로 이동합니다.
 
 </details>
 
@@ -69,104 +73,115 @@ printf 'RG=%s\n' "$RG"
 
 ⚠️ **주의**
 
-선행 조건을 확인하지 못했거나 측정 상태가 불분명하면 다음 단계로 넘어가지 않습니다.
+선행 상태를 확인하지 못했거나 observation 해석이 흔들리면 cleanup 전에 증적부터 다시 확인합니다.
 
 
-### 1) hard limitations 와 범위 제외를 먼저 확인
+### 1) observation JSON 세 개를 먼저 review
 
 👁️ **설명**
 
-아래 항목은 이 워크숍에서 지원하지 않거나 의도적으로 제외한 제약입니다.
-
-| 항목 | 의미 |
-| --- | --- |
-| API server authorized IP ranges | Cloud Shell IP가 바뀌면 접근 제어가 흔들릴 수 있어 이 워크숍 범위에서 다루지 않습니다 |
-| Windows | Windows container path 는 실습 범위 밖입니다 |
-| IPv6 | IPv6 구성은 실습 범위 밖입니다 |
-| DaemonSet | 일반 DaemonSet 경로는 VN2 비교 실습 대상으로 승인되지 않았습니다 |
-| Kubernetes network policy | 이 워크숍은 Kubernetes network policy 검증을 포함하지 않습니다 |
-| private ACR/private endpoint | public MCR 기준 benchmark 이므로 private registry 네트워크 설계는 범위 제외입니다 |
-| multi-region / production recommendation | 한 번의 워크숍 측정으로 운영 capacity recommendation 을 내리지 않습니다 |
-| NAP SKU 선택 | `Standard_D4s_v5`를 고정하므로 NAP의 자동 SKU 선택 품질이나 최적화를 비교하지 않습니다 |
-| NAP consolidation | consolidation 시간은 run reset에 포함되지만 Pod Ready latency에는 포함되지 않습니다 |
-| Image Cache | production 기본값이 아니라 cache 효과를 분리하는 통제된 lab 조건입니다 |
-| Azure 변동성 | region, SKU, capacity와 시점에 따라 provisioning 결과와 latency가 달라질 수 있습니다 |
-
-### 2) 안전한 cleanup 명령 실행
+Module 04-06의 active 산출물은 각각 `results/observations/vn2-ondemand.json`, `results/observations/vn2-standby.json`, `results/observations/vn2-standby-cached.json` 입니다. aggregate를 만들지 말고, 세 파일을 같은 형식으로 나란히 읽습니다.
 
 🟢 **실행**
 
-반드시 저장소 루트에서 아래 두 줄을 그대로 실행합니다.
+```bash
+for scenario in vn2-ondemand vn2-standby vn2-standby-cached; do
+  jq -r '[.scenario, .status, (.elapsed_ms | tostring), .node_name, .cleanup.status] | @tsv' \
+    "results/observations/${scenario}.json"
+done
+```
+
+📋 **예상 출력**
+
+- scenario 하나당 TSV 한 줄씩 총 세 줄이 나옵니다.
+- 각 줄에는 `scenario`, `status`, `elapsed_ms`, `node_name`, `cleanup.status`가 같은 순서로 보입니다.
+- 실패가 있었다면 `status` 또는 `cleanup.status`가 그대로 드러나야 하며, 숨기거나 평균으로 덮지 않습니다.
+
+👁️ **설명**
+
+이 출력은 발표용 순위표가 아니라 review 시작점입니다. 경로별로 어떤 lifecycle을 보았는지, cleanup가 바로 끝났는지, 추가 증적을 어디서 열어야 하는지만 확인합니다.
+
+### 2) 세 줄 worksheet에 관찰을 옮기기
+
+👁️ **설명**
+
+각 관찰은 숫자 하나보다 증적 묶음과 함께 읽어야 합니다. 먼저 evidence 디렉터리를 찾아 두고, 표의 빈칸을 팀 메모로 채웁니다.
+
+🟢 **실행**
 
 ```bash
-cd ~/aci-vn2-performance-workshop
-WORKSHOP_STATE="results/workshop.env"
-if [[ -f "$WORKSHOP_STATE" ]]; then
-  source "$WORKSHOP_STATE"
-fi
-if [[ -z "${RG:-}" ]]; then
-  printf 'RG is not set. Follow the fresh Cloud Shell recovery steps below before cleanup.\n' >&2
-  exit 1
-fi
+find results/evidence -maxdepth 1 -type d \
+  \( -name 'vn2-ondemand-*' -o -name 'vn2-standby-*' -o -name 'vn2-standby-cached-*' \) \
+  | sort
+```
+
+📋 **예상 출력**
+
+- OnDemand, StandbyPool, Image Cache 각각에 대응하는 evidence 디렉터리 경로가 보입니다.
+- 표의 `증적 경로` 칸에는 가장 최근 디렉터리 하나씩만 적어 두면 충분합니다.
+
+| 경로 | 관찰 시간 | lifecycle에서 확인한 점 | 증적 경로 |
+| --- | --- | --- | --- |
+| VN2 OnDemand | `results/observations/vn2-ondemand.json`의 `elapsed_ms` | `phase=Pending → phase=Running` 동안 net-new ACI sandbox 준비가 보였는가 | `results/evidence/vn2-ondemand-*` |
+| StandbyPool | `results/observations/vn2-standby.json`의 `elapsed_ms` | `running 1` pre/post로 ready capacity 소비와 refill이 보였는가 | `results/evidence/vn2-standby-*` |
+| Image Cache | `results/observations/vn2-standby-cached.json`의 `elapsed_ms` | cache request 후 same pool `1→0→1` 재구성이 반영되었는가 | `results/evidence/vn2-standby-cached-*` |
+
+세 값은 순위를 매기거나 일반화하지 않습니다.
+
+### 3) 해석 경계와 troubleshooting 포인트 기록
+
+👁️ **설명**
+
+이 워크숍은 세 경로를 한 번씩 관찰하는 참가자 동선입니다. 따라서 숫자를 더 빠른 순으로 줄 세우거나, 다른 구독·리전·시간대에 그대로 일반화하지 않습니다. 대신 `node_name`, standby pre/post, cache recycle, cleanup 여부를 evidence와 함께 설명합니다.
+
+⚠️ **주의**
+
+문제 해결은 저장해 둔 `results/evidence/` 파일을 기반으로 하고, 리소스 삭제 전까지 필요한 증적만 다시 엽니다. cleanup 이후에는 live cluster에서 같은 상태를 다시 보장할 수 없습니다.
+
+### 4) exact RG cleanup 실행과 absence 확인
+
+👁️ **설명**
+
+cleanup는 항상 `results/workshop.env`에서 exact RG를 불러온 뒤 실행합니다. `--yes`를 빼면 script가 `type the resource group name exactly to continue` 를 요구해 scope를 한 번 더 확인합니다.
+
+🟢 **실행**
+
+```bash
+source results/workshop.env
 scripts/cleanup.sh --resource-group "$RG" --yes
 az group exists --name "$RG"
 ```
 
 📋 **예상 출력**
 
-정상 종료 뒤 기대하는 마지막 출력은 아래와 같습니다.
-
 ```text
 false
 ```
 
-🟢 **실행**
-
-상태를 이미 복구했다면 실제 삭제 명령은 아래 두 줄입니다.
-
-```bash
-scripts/cleanup.sh --resource-group "$RG" --yes
-az group exists --name "$RG"
-```
-
 👁️ **설명**
 
-`cleanup.sh`는 먼저 subscription ID와 resource group 존재 여부를 확인하고, RG가 이미 없으면 조기에 종료합니다. RG가 존재하면 `az standby-container-group-pool list --resource-group "$RG" --query '[].name' --output tsv`로 현재 RG 안의 standby pool 이름만 읽습니다. graceful cluster cleanup은 exact `vn2-bench-` prefix를 가진 per-run namespace만 bounded best-effort sweep으로 삭제하고 `vn2-image-cache` namespace를 삭제한 뒤, 아래 순서로 NAP 리소스 삭제와 NodeClaim 0 관찰을 시도하고 Helm release를 제거합니다. Namespace listing or deletion times out or fails 하면 경고를 보존하고 billing-critical RG deletion을 계속합니다.
+`az group exists`가 바로 `false`가 되지 않으면, 먼저 script가 남긴 경고를 읽습니다. fresh Cloud Shell session, missing kubeconfig, 또는 cluster unreachable 때문에 `WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.` 이나 `Cleanup completed with warnings.` 가 보여도 billing-critical RG deletion 자체는 계속 진행되어야 합니다.
 
 🟢 **실행**
 
 ```bash
-kubectl delete nodepool workshop-nap --ignore-not-found=true --wait=false
-kubectl delete aksnodeclass workshop-nap --ignore-not-found=true --wait=false
-kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o name
+az resource list --resource-group "$RG" --query '[].id' --output tsv
 ```
 
-👁️ **설명**
+📋 **예상 출력**
 
-NAP delete는 `--wait=false`로 반환을 기다리지 않으며, NodeClaim 0 관찰을 포함한 각 cluster 명령은 `CLUSTER_CLEANUP_TIMEOUT_SECONDS` 안에서만 실행됩니다. 마지막 명령의 빈 출력이 NodeClaim 0 evidence입니다. NodeClaim이 남아 있거나 timeout이 발생하거나 cluster가 unreachable이면 경고를 남기되, `vn2-standby` / `vn2-ondemand` Helm release, 그 RG 안의 standby pool, 마지막으로 RG 자체 삭제를 계속합니다.
+- 남은 것이 없으면 비어 있는 출력이거나 script가 이미 `false`를 반환합니다.
+- 남은 것이 있으면 exact residual resource IDs를 그대로 기록하고 같은 RG만 다시 정리합니다.
 
 ⚠️ **주의**
 
-fresh Cloud Shell session, authorized IP drift, 또는 missing kubeconfig 때문에 `kubectl`/`helm` 이 cluster unreachable warning 을 내더라도 billing-critical RG deletion 은 계속 진행되어야 합니다. 이 경우 `WARNING: graceful cluster cleanup failed; continuing with standby pool and resource group deletion.` 또는 `Cleanup completed with warnings.` 같은 경고는 정상적인 evidence 이며, 숨기지 말고 CLI 출력 그대로 보존하십시오.
+cleanup는 broad match가 아니라 exact RG 하나만 받습니다. `results/workshop.env`를 source하지 못한 상태에서 임의 이름이나 추측한 RG로 삭제를 시작하지 않습니다.
+
+### 5) fresh Cloud Shell recovery와 missing state file fallback
 
 👁️ **설명**
 
-`--yes` 를 빼면 script 는 subscription, resource group, Helm releases, standby pools 를 출력한 뒤 `type the resource group name exactly to continue` 를 요구합니다. 즉 cleanup scope 를 이름으로 다시 검증합니다.
-
-cleanup polling 이 실패하거나 RG 가 timeout 안에 사라지지 않으면 script 는 `az resource list --resource-group "$RG" --query '[].id' --output tsv` 를 호출해 residual resource IDs 를 출력합니다. 문서/티켓에는 이 exact residual resource IDs evidence 를 함께 남기십시오.
-
-### 3) fresh Cloud Shell recovery 와 missing state file 대응
-
-👁️ **설명**
-
-fresh Cloud Shell recovery 의 첫 선택지는 항상 기존 state file 입니다.
-
-🟢 **실행**
-
-```bash
-cd ~/aci-vn2-performance-workshop
-source results/workshop.env
-```
+fresh Cloud Shell recovery의 첫 선택지는 항상 기존 `results/workshop.env`입니다. 이 파일이 있으면 다시 source 하고 4단계 cleanup 명령으로 돌아갑니다.
 
 👁️ **설명**
 
@@ -178,13 +193,13 @@ source results/workshop.env
 cd ~/aci-vn2-performance-workshop
 WORKSHOP_STATE="results/workshop.env"
 mkdir -p results
-az group list --query "[?starts_with(name, 'rg-vn2-bench-')].[name, location]" --output table
+az group list --query "[?starts_with(name, 'rg-vn2-hands-on-')].[name, location]" --output table
 
-export RG="rg-vn2-bench-12345"
+export RG='rg-vn2-hands-on-12345'
 STATE_TMP="${WORKSHOP_STATE}.tmp.$$"
 (
   umask 077
-  printf 'export RG=%q\n' "$RG" >"$STATE_TMP"
+  printf "export RG='%s'\n" "$RG" >"$STATE_TMP"
 )
 chmod 600 "$STATE_TMP"
 mv "$STATE_TMP" "$WORKSHOP_STATE"
@@ -193,44 +208,31 @@ source "$WORKSHOP_STATE"
 
 👁️ **설명**
 
-이 표는 broad match 를 보여 줄 뿐이며, 자동 삭제 대상이 아닙니다.
+이 fallback은 exact RG를 새 shell에 다시 저장하기 위한 최소 절차입니다. cleanup 자체는 여전히 `scripts/cleanup.sh --resource-group "$RG" --yes`로만 실행하고, 필요하면 `az group show --name "$RG"`나 기존 evidence로 이름을 다시 대조합니다.
 
 ⚠️ **주의**
 
-Never pass a wildcard or broad match into cleanup. 참가자는 Portal, `az group show --name "$RG"`, 또는 기존 evidence 를 대조해 exact RG 하나를 직접 확정해야 합니다. Save the recovered exact RG back into results/workshop.env before deleting anything.
-
-👁️ **설명**
-
-`STANDBY_POOL` 이 꼭 필요하면 exact RG 를 확인한 다음 그 RG 안에서 다시 조회하십시오. 그러나 cleanup 자체는 broad match 를 받아서는 안 되며, `rg-vn2-bench-*` 같은 패턴을 `scripts/cleanup.sh` 에 직접 넘기면 안 됩니다.
+Never pass a wildcard or broad match into cleanup. Save the recovered exact RG back into results/workshop.env before deleting anything.
 
 ## 문제 해결
 
-| 증상 | 실제 증거 | 확인 명령 | 조치 |
-| --- | --- | --- | --- |
-| NAP node가 생성되지 않거나 reset되지 않는다 | checker JSON에서 NodePool Ready일 때 `health=ready`입니다. NodePool 조회 실패는 health가 `missing`, Ready condition 실패는 health가 `degraded`, deadline 초과는 health가 `timeout`입니다. timeout 합성 evidence에서는 아직 관찰하지 못한 `nodes`와 `nodeclaims`가 `null`이므로 0으로 간주하면 안 됩니다 | `kubectl get nodepool workshop-nap -o yaml`, `kubectl get nodeclaims -l karpenter.sh/nodepool=workshop-nap -o yaml`, `kubectl get events -A --field-selector source=karpenter-events` | NodePool condition, NodeClaim provisioning/consolidation event, quota와 `Standard_D4s_v5` capacity를 확인합니다. run 전후 NodeClaim 0이 확인되지 않으면 다음 run을 시작하지 않습니다 |
-| VN2 node 가 `NotReady` 이다 | virtual node 자체보다 먼저 infrastructure Pod/cluster event 를 봐야 한다 | `kubectl get nodes -L benchmark-path -o wide`, `kubectl get pods -A -o wide`, `kubectl get events -A --sort-by=.metadata.creationTimestamp \| tail -n 40` | 두 VN2 infrastructure release와 benchmark Pod 5개 × 500m baseline 을 함께 수용하는 `Standard_D16s_v5` 기준 capacity, kubelet/Standby Pool RBAC, subnet 설정을 확인한 뒤 `NotReady` 원인을 먼저 제거한다 |
-| standby pool 이 degraded 로 보인다 | Azure CLI 원본은 `status.code` 에 `HealthState/Degraded` 같은 값을 주고, checker 출력은 `{"health":"degraded"}` 로 정규화한다 | `./scripts/check-standby-pool.sh -g "$RG" -n "$STANDBY_POOL" --expect-running 5 --timeout-seconds 1200 --interval-seconds 15`, `az standby-container-group-pool status --resource-group "$RG" --name "$STANDBY_POOL" --version latest --output json` | degraded 를 숨기지 말고 RBAC, delegated subnet, quota, region 상태를 먼저 확인한다 |
-| running count 가 5 아래로 떨어진다 | healthy 여도 `running` 이 4 이하이면 warm capacity 가 아직 덜 찬 것이다 | `./scripts/check-standby-pool.sh -g "$RG" -n "$STANDBY_POOL" --expect-running 5 --timeout-seconds 1200 --interval-seconds 15`, `az standby-container-group-pool status --resource-group "$RG" --name "$STANDBY_POOL" --version latest --output json` | running 5 가 될 때까지 기다리거나 quota/capacity 이슈를 해결한 뒤 다음 run 으로 간다 |
-| cached scenario 가 uncached 보다 빠르지 않다 | summary 와 diagnostics 를 같이 읽어야 한다. cache Pod 또는 recycle 이 빠지면 해석이 틀어진다 | `jq '.["vn2-standby-cached"] | {scenario, runs_count, ready_samples, failed_count, timeout_count, create_to_ready_ms, batch_all_ready_ms, pod_speedup_ratio, batch_speedup_ratio}' results/summary.json`, `kubectl get pod -n vn2-image-cache vn2-benchmark-image-cache -o yaml`, `sed -n '1,160p' results/diagnostics/vn2-standby-cached-run-1/kubectl-events.txt`, `cat results/diagnostics/vn2-standby-cached-run-1/az-container-list.json` | cache Pod 존재, `--max-ready-capacity 0`, `--max-ready-capacity 5` recycle, running 5 복구를 모두 확인한 뒤에만 cached 효과를 해석한다 |
-| standby fallback 흔적이 보인다 | raw metadata 또는 summary evidence 에 `StandbyPoolReuseFailure`, `StandbyPoolExhaustedPool` 가 남아 있으면 warm reuse 대신 fallback 이 섞였을 수 있다 | `grep -R --line-number -E 'StandbyPoolReuseFailure|StandbyPoolExhaustedPool' results/summary.json results/summary.csv results/summary.md results/raw results/diagnostics || true` | 해당 run 을 fallback-contaminated 로 표시하고 clean standby comparison 에서 별도로 설명한다 |
-| Pod 가 timeout 이거나 image pull/NAT/quota 의심이 든다 | raw JSON 의 `terminal_failure_reason`, `terminal_failure_message`, `container_state` 와 diagnostics 를 같이 봐야 한다 | `jq '.pods[] | select(.terminal_state != "ready") | {name, terminal_state, terminal_failure_reason, terminal_failure_message, create_to_scheduled_ms, scheduled_to_ready_ms, create_to_ready_ms, container_state}' results/raw/vn2-standby-cached-run-1.json`, `sed -n '1,160p' results/diagnostics/vn2-standby-cached-run-1/kubectl-events.txt`, `cat results/diagnostics/vn2-standby-cached-run-1/az-container-list.json` | `ImagePullBackOff`, `ErrImagePull`, quota 부족, NAT Gateway outbound 누락, image pull 지연을 구분하고 수정 후 실패 시나리오만 다시 실행한다 |
-
-### cleanup 실패 시 재확인 순서
-
-1. `az group exists --name "$RG"` 가 아직 `true` 면 cleanup 이 끝나지 않은 것입니다.
-2. `az resource list --resource-group "$RG" --query '[].id' --output tsv` 로 exact residual resource IDs 를 확인합니다.
-3. fresh Cloud Shell session 이거나 kubeconfig 가 비어 있어도 `scripts/cleanup.sh --resource-group "$RG" --yes` 는 billing-critical RG deletion 을 다시 시도해야 합니다. cluster cleanup warning 이 보이면 expected evidence 로 간주하고 같은 RG 로 다시 실행합니다.
-4. 그래도 실패하면 resource ID 와 CLI 오류를 그대로 보존하고, 어떤 단계에서 멈췄는지 공유합니다.
+| 증상 | 확인 명령 | 조치 |
+| --- | --- | --- |
+| VN2 virtual node가 `NotReady`이거나 Pod가 `phase=Running`으로 가지 못한다 | `kubectl get nodes -L benchmark-path -o wide`, `kubectl get pods -A -o wide`, `kubectl get events -A --sort-by=.metadata.creationTimestamp \| tail -n 40` | 최신 `results/evidence/.../events.txt`, `pod-live.yaml`, `aci-inventory.json`을 먼저 열고 ondemand/standby release, delegated subnet, namespace 상태를 같은 RG 기준으로 다시 점검합니다 |
+| standby pool이 healthy하지 않거나 ready가 비어 있다 | `./scripts/check-standby-pool.sh --resource-group "$RG" --name "$STANDBY_POOL" --expect-running 1 --timeout-seconds 1200 --interval-seconds 15`, `az standby-container-group-pool status --resource-group "$RG" --name "$STANDBY_POOL" --version latest --output json` | Azure CLI 원본의 `status.code`가 `HealthState/Degraded`인지 보고, checker 출력의 `{"health":"degraded"}` 또는 `running 1` 미달 여부를 그대로 기록한 뒤 RBAC, subnet, quota, region 상태를 확인합니다 |
+| standby warm path에 fallback 흔적이 섞인다 | `grep -R --line-number -E 'StandbyPoolReuseFailure|StandbyPoolExhaustedPool' results/observations results/evidence \| cat` | `StandbyPoolReuseFailure` 또는 `StandbyPoolExhaustedPool`가 보이면 해당 관찰은 warm reuse만 본 것이 아닐 수 있으므로 별도 메모로 분리하고 일반화하지 않습니다 |
+| cached path에서 image pull 또는 네트워크 문제가 의심된다 | `LATEST="$(find results/evidence -maxdepth 1 -type d -name 'vn2-standby-cached-*' \| sort \| tail -n 1)"`, `sed -n '1,160p' "$LATEST/events.txt"`, `sed -n '1,160p' "$LATEST/pod-live.yaml"`, `cat "$LATEST/aci-inventory.json"` | `ImagePullBackOff`, `ErrImagePull`, quota 부족, NAT Gateway outbound 누락 중 무엇이 보이는지 구분하고, 원인을 수정한 뒤 필요한 cached observation만 다시 실행합니다 |
+| cleanup 뒤에도 RG가 남아 있거나 경고가 이해되지 않는다 | `az group exists --name "$RG"`, `az resource list --resource-group "$RG" --query '[].id' --output tsv` | fresh Cloud Shell recovery로 exact RG를 다시 source 한 뒤 같은 RG만 재시도합니다. missing kubeconfig 때문에 cluster cleanup warning이 있더라도 residual resource IDs를 기록하고 billing-critical RG deletion을 끝까지 확인합니다 |
 
 ## 완료 체크포인트
 
-- API server authorized IP ranges, Windows, IPv6, DaemonSet, Kubernetes network policy 등 hard limitations 를 팀에 설명할 수 있다.
-- troubleshooting 표의 각 행에 대해 실제 evidence 파일 또는 CLI 명령을 다시 실행할 수 있다.
-- NAP checker의 ready/missing/degraded/timeout 상태와 unknown `null` count를 구분하고 NodeClaim 0을 확인할 수 있다.
-- `results/workshop.env` 를 source 하는 정상 경로와 missing state file 때의 fresh Cloud Shell recovery 경로를 모두 설명할 수 있다.
-- `scripts/cleanup.sh --resource-group "$RG" --yes` 를 실행했다.
-- `az group exists --name "$RG"` 결과가 최종적으로 `false` 다.
-- cleanup scope 검증과 residual resource IDs 동작을 설명할 수 있다.
+- `results/observations/` 아래 세 JSON을 같은 형식으로 읽었다.
+- 세 줄 worksheet에 `경로`, `관찰 시간`, `lifecycle에서 확인한 점`, `증적 경로`를 채웠다.
+- 세 값은 순위를 매기거나 일반화하지 않습니다 라는 원칙을 다시 설명할 수 있다.
+- `results/workshop.env`를 source 하는 경로와 missing state file fallback 경로를 구분할 수 있다.
+- `scripts/cleanup.sh --resource-group "$RG" --yes`를 exact RG로 실행했다.
+- `az group exists --name "$RG"` 결과가 최종적으로 `false`다.
+- 필요하면 residual resource IDs를 다시 확인할 수 있다.
 
 ## 이전/다음
 

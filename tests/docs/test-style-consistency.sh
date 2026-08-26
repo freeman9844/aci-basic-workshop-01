@@ -14,9 +14,9 @@ module_files = {
     "01": root / "docs/01-prerequisites.md",
     "02": root / "docs/02-azure-foundation.md",
     "03": root / "docs/03-install-dual-vn2.md",
-    "04": root / "docs/04-baseline-ondemand-benchmark.md",
-    "05": root / "docs/05-standby-cache-benchmark.md",
-    "06": root / "docs/06-analyze-results.md",
+    "04": root / "docs/04-vn2-ondemand-hands-on.md",
+    "05": root / "docs/05-standby-pool-hands-on.md",
+    "06": root / "docs/06-image-cache-hands-on.md",
     "07": root / "docs/07-limitations-troubleshooting-cleanup.md",
 }
 

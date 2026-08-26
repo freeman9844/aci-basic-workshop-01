@@ -14,9 +14,9 @@ module_files = {
     "01": root / "docs/01-prerequisites.md",
     "02": root / "docs/02-azure-foundation.md",
     "03": root / "docs/03-install-dual-vn2.md",
-    "04": root / "docs/04-baseline-ondemand-benchmark.md",
-    "05": root / "docs/05-standby-cache-benchmark.md",
-    "06": root / "docs/06-analyze-results.md",
+    "04": root / "docs/04-vn2-ondemand-hands-on.md",
+    "05": root / "docs/05-standby-pool-hands-on.md",
+    "06": root / "docs/06-image-cache-hands-on.md",
     "07": root / "docs/07-limitations-troubleshooting-cleanup.md",
 }
 
@@ -26,41 +26,21 @@ if missing:
 
 readme_text = readme.read_text(encoding="utf-8")
 required_readme_strings = [
-    "180분",
-    "Korea Central",
-    "5개 Pod × 3회",
-    "12 raw JSON",
-    "60 Pod",
-    "AKS NAP",
+    "# ACI Basic 워크솝",
+    "120분",
+    "Pod 1개를 한 번",
+    "성능 benchmark가 아닙니다",
     "VN2 OnDemand",
     "StandbyPool",
     "Image Cache",
-    "비용",
-    "Module 01",
-    "Module 07",
-    "Owner",
-    "AKS VM",
     "Standard_D16s_v5",
-    "Standard_D4s_v5",
-    "AKS NAP",
-    "workshop-nap",
-    "0개 node",
-    "fixed system node",
-    "NAT Gateway",
-    "public IP",
-    "ACI OnDemand",
-    "5개의 warm standby",
-    "두 VN2 infrastructure release",
-    "```mermaid",
-    "VN2 Helm release: ondemand",
-    "VN2 Helm release: standby",
-    "Warm UVM, cached image",
-    "Mandatory cleanup",
-    "results/workshop.env",
-    "fresh Cloud Shell recovery",
-    "Korea Central 2026-08-23 live rehearsal reference",
-    "docs/reference/korea-central-2026-08-23.md",
-    "docs/reference/korea-central-2026-08-23.json",
+    "ready capacity 1",
+    "선택 사항: 과거 성능 benchmark",
+    "docs/appendix/performance-benchmark.md",
+    "docs/04-vn2-ondemand-hands-on.md",
+    "docs/05-standby-pool-hands-on.md",
+    "docs/06-image-cache-hands-on.md",
+    "docs/07-limitations-troubleshooting-cleanup.md",
 ]
 for required in required_readme_strings:
     if required not in readme_text:
@@ -70,23 +50,27 @@ for removed_heading in ("## 빠른 시작", "## 세션 복구 가이드"):
     if removed_heading in readme_text:
         raise SystemExit(f"README must not contain removed section: {removed_heading}")
 
-for scenario in ("aks-nap", "vn2-ondemand", "vn2-standby", "vn2-standby-cached"):
-    if scenario not in readme_text:
-        raise SystemExit(f"README is missing scenario entry: {scenario}")
-
-stale_aks_path = "benchmark-path=" + "aks"
-if re.search(re.escape(stale_aks_path) + r"(?!-nap)", readme_text):
-    raise SystemExit("README must not route benchmark Pods to the fixed system node")
-
-for stale_reference in (
-    "Pod median 9.796배",
-    "Batch all-ready median 7.062배",
-    "vn2-standby-" + "uncached",
-    "Task 11의 새 NAP live rehearsal reference",
-    "실제 측정값이 게시되기 전에는 현재 reference 성능 수치가 없습니다",
+for forbidden in (
+    "180분",
+    "5개 Pod × 3회",
+    "12 raw JSON",
+    "60 Pod",
+    "Standard_D4s_v5",
+    "workshop-nap",
+    "summary.json",
+    "median",
+    "p95",
+    "speed-up",
+    "Korea Central 2026-08-23 live rehearsal reference",
+    "docs/reference/korea-central-2026-08-23.md",
+    "docs/reference/korea-central-2026-08-23.json",
 ):
-    if stale_reference in readme_text:
-        raise SystemExit(f"README must not present the obsolete warm-AKS reference as current: {stale_reference}")
+    if forbidden in readme_text:
+        raise SystemExit(f"README must not contain active-flow stale text: {forbidden}")
+
+for scenario in ("vn2-ondemand", "vn2-standby", "vn2-standby-cached"):
+    if scenario not in readme_text:
+        raise SystemExit(f"README is missing active scenario entry: {scenario}")
 
 module_rows = {}
 for line in readme_text.splitlines():
@@ -96,36 +80,36 @@ for line in readme_text.splitlines():
 
 expected_readme_durations = {
     "00": 5,
-    "01": 20,
-    "02": 35,
+    "01": 15,
+    "02": 30,
     "03": 20,
-    "04": 45,
-    "05": 30,
+    "04": 10,
+    "05": 15,
     "06": 15,
     "07": 10,
 }
 if module_rows != expected_readme_durations:
     raise SystemExit(f"README module duration table mismatch: {module_rows}")
-if sum(module_rows.values()) != 180:
-    raise SystemExit(f"README module duration total must be 180, found {sum(module_rows.values())}")
+if sum(module_rows.values()) != 120:
+    raise SystemExit(f"README module duration total must be 120, found {sum(module_rows.values())}")
 
 expected_doc_durations = {
-    "01": 20,
-    "02": 35,
+    "01": 15,
+    "02": 30,
     "03": 20,
-    "04": 45,
-    "05": 30,
+    "04": 10,
+    "05": 15,
     "06": 15,
     "07": 10,
 }
 expected_navigation = {
     "01": ("../README.md", "./02-azure-foundation.md"),
     "02": ("./01-prerequisites.md", "./03-install-dual-vn2.md"),
-    "03": ("./02-azure-foundation.md", "./04-baseline-ondemand-benchmark.md"),
-    "04": ("./03-install-dual-vn2.md", "./05-standby-cache-benchmark.md"),
-    "05": ("./04-baseline-ondemand-benchmark.md", "./06-analyze-results.md"),
-    "06": ("./05-standby-cache-benchmark.md", "./07-limitations-troubleshooting-cleanup.md"),
-    "07": ("./06-analyze-results.md", "../README.md"),
+    "03": ("./02-azure-foundation.md", "./04-vn2-ondemand-hands-on.md"),
+    "04": ("./03-install-dual-vn2.md", "./05-standby-pool-hands-on.md"),
+    "05": ("./04-vn2-ondemand-hands-on.md", "./06-image-cache-hands-on.md"),
+    "06": ("./05-standby-pool-hands-on.md", "./07-limitations-troubleshooting-cleanup.md"),
+    "07": ("./06-image-cache-hands-on.md", "../README.md"),
 }
 
 banned_markers = ("TODO", "TBD", "FIXME", "작성 예정", "미정", "incomplete")
@@ -163,18 +147,11 @@ for module, path in module_files.items():
         raise SystemExit(f"{path.name} is missing next link to {next_target}")
 
 participant_total = module_rows["00"] + sum(expected_doc_durations.values())
-if participant_total != 180:
-    raise SystemExit(f"Cross-file participant duration total must be 180, found {participant_total}")
+if participant_total != 120:
+    raise SystemExit(f"Cross-file participant duration total must be 120, found {participant_total}")
 
 if "중간에 shell/session을 바꾸지 않았다." in readme_text:
     raise SystemExit("README must not require a single uninterrupted shell session anymore")
 
-for required_path in (
-    root / "docs/reference/korea-central-2026-08-23.md",
-    root / "docs/reference/korea-central-2026-08-23.json",
-    root / "tests/test_rehearsal_reference.py",
-):
-    if not required_path.exists():
-        raise SystemExit(f"Current NAP reference artifact is missing: {required_path.relative_to(root)}")
-
+print("PASS: 120-minute workshop overview matches the active hands-on contract")
 PY

@@ -24,6 +24,7 @@ run_step "Running prerequisites/foundation documentation tests" bash tests/docs/
 run_step "Running dual VN2 installation documentation tests" bash tests/docs/test-install-dual-vn2.sh
 run_step "Running hands-on module documentation tests" bash tests/docs/test-hands-on-modules.sh
 run_step "Running review/cleanup documentation tests" bash tests/docs/test-review-cleanup.sh
+run_step "Running hands-on rehearsal reference tests" python3 -m unittest tests.test_hands_on_rehearsal_reference -v
 run_step "Running optional appendix documentation tests" bash tests/docs/test-performance-appendix.sh
 run_step "Syntax-checking documented bash fences" bash tests/docs/test-shell-survivability.sh
 run_step "Appendix: Running benchmark orchestration tests" bash tests/scripts/test-run-benchmark.sh
@@ -87,6 +88,8 @@ active_paths = {
     root / "scripts/cleanup.sh",
     root / "manifests/hands-on-pod-template.yaml",
     root / "manifests/image-cache-pod.yaml",
+    root / "docs/reference/korea-central-hands-on-2026-08-26.md",
+    root / "docs/reference/korea-central-hands-on-2026-08-26.json",
 }
 appendix_paths = {
     root / "docs/appendix/performance-benchmark.md",
@@ -103,12 +106,15 @@ required_paths = {
     root / ".gitignore",
     root / "tests/validate-workshop.sh",
     root / "tests/scripts/test-validate-workshop.sh",
+    root / "tests/test_hands_on_rehearsal_reference.py",
     *active_paths,
     *appendix_paths,
 }
 text_paths = {
     root / "README.md",
     *active_module_paths.values(),
+    root / "docs/reference/korea-central-hands-on-2026-08-26.md",
+    root / "docs/reference/korea-central-hands-on-2026-08-26.json",
     root / "docs/appendix/performance-benchmark.md",
     root / "docs/reference/korea-central-2026-08-23.md",
     root / "docs/reference/korea-central-2026-08-23.json",

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "purpose": "hands-on rehearsal",
+  "date": "2026-08-26",
+  "location": "koreacentral",
+  "observations": [
+    {
+      "scenario": "vn2-ondemand",
+      "status": "ready",
+      "elapsed_ms": 88714,
+      "node_name": "vn2-ondemand-0",
+      "evidence_dir": "results/evidence/vn2-ondemand-20260826t092700z-1748262"
+    },
+    {
+      "scenario": "vn2-standby",
+      "status": "ready",
+      "elapsed_ms": 21371,
+      "node_name": "vn2-standby-0",
+      "evidence_dir": "results/evidence/vn2-standby-20260826t092922z-1749295"
+    },
+    {
+      "scenario": "vn2-standby-cached",
+      "status": "ready",
+      "elapsed_ms": 16773,
+      "node_name": "vn2-standby-0",
+      "evidence_dir": "results/evidence/vn2-standby-cached-20260826t093202z-1750023"
+    }
+  ],
+  "standby_pool": {
+    "initial_running": 1,
+    "recycle": [
+      1,
+      0,
+      1
+    ],
+    "post_scenario_running": 1
+  },
+  "cleanup": {
+    "resource_group_name": "rg-vn2-hands-on-17731",
+    "resource_group_exists": false
+  }
+}

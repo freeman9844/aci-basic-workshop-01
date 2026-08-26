@@ -31,6 +31,7 @@ required_lines = [
     'run_step "Running hands-on orchestration tests" bash tests/scripts/test-run-hands-on.sh',
     'run_step "Running hands-on module documentation tests" bash tests/docs/test-hands-on-modules.sh',
     'run_step "Running review/cleanup documentation tests" bash tests/docs/test-review-cleanup.sh',
+    'run_step "Running hands-on rehearsal reference tests" python3 -m unittest tests.test_hands_on_rehearsal_reference -v',
     'run_step "Running optional appendix documentation tests" bash tests/docs/test-performance-appendix.sh',
     'run_step "Appendix: Running benchmark orchestration tests" bash tests/scripts/test-run-benchmark.sh',
     'run_step "Appendix: Running collector unit tests" python3 -m unittest tests.test_collect_pod_latency -v',
@@ -126,6 +127,22 @@ combined = f"{result.stdout}\n{result.stderr}"
 if "median" not in combined.lower():
     raise SystemExit(
         "README median fixture failed for the wrong reason.\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+
+hands_on_reference_fixture = copy_repository(test_dir / "median-in-hands-on-reference")
+hands_on_reference_path = hands_on_reference_fixture / "docs/reference/korea-central-hands-on-2026-08-26.md"
+hands_on_reference_path.write_text(
+    hands_on_reference_path.read_text(encoding="utf-8") + "\nmedian\n",
+    encoding="utf-8",
+)
+result = run_integration_contract(hands_on_reference_fixture)
+if result.returncode == 0:
+    raise SystemExit("Integration contract must fail when the hands-on rehearsal reference reintroduces median")
+combined = f"{result.stdout}\n{result.stderr}"
+if "median" not in combined.lower():
+    raise SystemExit(
+        "Hands-on reference median fixture failed for the wrong reason.\n"
         f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
     )
 

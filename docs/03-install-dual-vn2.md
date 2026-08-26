@@ -163,23 +163,39 @@ if [[ ! -f "$WORKSHOP_STATE" ]]; then
   exit 1
 fi
 source "$WORKSHOP_STATE"
-
-helm repo add virtualnode \
-  https://microsoft.github.io/virtualnodesOnAzureContainerInstances/
-helm repo update
-
-export VN2_CHART_VERSION="1.3410.26081102"
-export ONDEMAND_RELEASE="vn2-ondemand"
-export STANDBY_RELEASE="vn2-standby"
 unset STANDBY_POOL
 
-persist_workshop_state
+( set -euo pipefail
+  : "${LOCATION:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${RG:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${VNET:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${AKS_SUBNET:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${CG_SUBNET:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${NAT_NAME:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${NAT_PIP_NAME:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${AKS:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${VM_SIZE:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${AKS_IDENTITY:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${AKS_IDENTITY_ID:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+  : "${K8S_VERSION:?Recover the full Module 02 state before rewriting results/workshop.env.}"
+
+  helm repo add virtualnode \
+    https://microsoft.github.io/virtualnodesOnAzureContainerInstances/
+  helm repo update
+
+  export VN2_CHART_VERSION="1.3410.26081102"
+  export ONDEMAND_RELEASE="vn2-ondemand"
+  export STANDBY_RELEASE="vn2-standby"
+  unset STANDBY_POOL
+
+  persist_workshop_state
+)
 source "$WORKSHOP_STATE"
 ```
 
 👁️ **설명**
 
-이 워크숍은 chart version을 고정합니다. `latest` 나 임의의 새 chart로 바꾸면 Helm value 이름, webhook 동작, standby profile 허용 범위가 달라져 실습 결과를 비교할 수 없습니다. Step 2가 끝나면 foundation 12 keys에 `VN2_CHART_VERSION`, `ONDEMAND_RELEASE`, `STANDBY_RELEASE` 를 더한 15-key state만 남고, 아직 존재하지 않는 `STANDBY_POOL` 은 stale 값 없이 비어 있어야 합니다.
+이 워크숍은 chart version을 고정합니다. `latest` 나 임의의 새 chart로 바꾸면 Helm value 이름, webhook 동작, standby profile 허용 범위가 달라져 실습 결과를 비교할 수 없습니다. 또한 partially recovered `results/workshop.env` 를 그대로 덮어써 blank export를 만들지 않도록 foundation 12 keys가 모두 비어 있지 않은지 먼저 검증한 뒤에만 atomic rewrite를 수행합니다. Step 2가 끝나면 foundation 12 keys에 `VN2_CHART_VERSION`, `ONDEMAND_RELEASE`, `STANDBY_RELEASE` 를 더한 15-key state만 남고, 아직 존재하지 않는 `STANDBY_POOL` 은 stale 값 없이 비어 있어야 합니다.
 
 ### 3) 두 release를 separate namespace 에 동시에 설치
 

@@ -53,6 +53,18 @@ required_strings = [
     ": \"${CG_SUBNET:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
     ": \"${AKS_IDENTITY:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
     ": \"${AKS_IDENTITY_ID:?Run Module 02 first or recover results/workshop.env before continuing.}\"",
+    ": \"${LOCATION:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${RG:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${VNET:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${AKS_SUBNET:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${CG_SUBNET:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${NAT_NAME:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${NAT_PIP_NAME:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${AKS:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${VM_SIZE:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${AKS_IDENTITY:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${AKS_IDENTITY_ID:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
+    ": \"${K8S_VERSION:?Recover the full Module 02 state before rewriting results/workshop.env.}\"",
     "--namespace vn2-ondemand",
     "--namespace vn2-standby",
     "--create-namespace",
@@ -260,6 +272,55 @@ finally:
         shutil.rmtree(recovery_scratch)
 
 step2_block = extract_first_bash_block("### 2) VN2 chart 저장소 추가와 pinned release 값 선언")
+partial_scratch = root / ".test-doc-install-dual-vn2-partial"
+if partial_scratch.exists():
+    shutil.rmtree(partial_scratch)
+
+try:
+    (partial_scratch / "results").mkdir(parents=True)
+    partial_state_path = partial_scratch / "results" / "workshop.env"
+    original_partial_state = "\n".join(
+        [
+            "export RG='rg-vn2-hands-on-10001'",
+            "export AKS='aks-vn2-hands-on'",
+            "export CG_SUBNET='cg'",
+            "export AKS_IDENTITY='id-aks-vn2-hands-on'",
+            "export AKS_IDENTITY_ID='/subscriptions/test/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-aks-vn2-hands-on'",
+            "export VN2_CHART_VERSION='stale-chart'",
+            "export ONDEMAND_RELEASE='stale-ondemand'",
+            "export STANDBY_RELEASE='stale-standby'",
+            "export STANDBY_POOL='stale-pool'",
+            "",
+        ]
+    )
+    partial_state_path.write_text(original_partial_state, encoding="utf-8")
+
+    partial_result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    "umask 0022",
+                    "helm() { return 0; }",
+                    step2_block,
+                ]
+            ),
+        ],
+        cwd=partial_scratch,
+        text=True,
+        capture_output=True,
+    )
+
+    if partial_result.returncode == 0:
+        raise SystemExit("Step 2 must fail when any persisted foundation key is missing")
+
+    if partial_state_path.read_text(encoding="utf-8") != original_partial_state:
+        raise SystemExit("Step 2 must not replace results/workshop.env when foundation state is partial")
+finally:
+    if partial_scratch.exists():
+        shutil.rmtree(partial_scratch)
 
 scratch = root / ".test-doc-install-dual-vn2"
 if scratch.exists():

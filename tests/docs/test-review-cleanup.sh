@@ -63,6 +63,7 @@ required_07 = [
     "Save the recovered exact RG back into results/workshop.env before deleting anything.",
     "StandbyPoolReuseFailure",
     "StandbyPoolExhaustedPool",
+    "StandbyPoolReuseFailure\\|StandbyPoolExhaustedPool",
     "status.code",
     '\"health\":\"degraded\"',
     "HealthState/Degraded",
@@ -99,6 +100,11 @@ for forbidden in (
 ):
     if forbidden in text07:
         raise SystemExit(f"docs/07-limitations-troubleshooting-cleanup.md must not contain stale text: {forbidden}")
+
+if "StandbyPoolReuseFailure|StandbyPoolExhaustedPool" in text07:
+    raise SystemExit(
+        "docs/07-limitations-troubleshooting-cleanup.md must escape the pipe in the troubleshooting regex"
+    )
 
 cleanup_block = re.compile(
     r"```bash\nsource results/workshop\.env\nscripts/cleanup\.sh --resource-group \"\$RG\" --yes\naz group exists --name \"\$RG\"\n```",

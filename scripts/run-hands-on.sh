@@ -110,6 +110,49 @@ json_file_or_null() {
   fi
 }
 
+ensure_directory() {
+  local label="$1"
+  local path="$2"
+  local mkdir_output mkdir_status
+
+  set +e
+  mkdir_output="$(mkdir -p "$path" 2>&1)"
+  mkdir_status=$?
+  set -e
+
+  if [[ "$mkdir_status" -ne 0 ]]; then
+    record_failure "$label setup failed: ${mkdir_output:-mkdir -p failed}" "$mkdir_status"
+    return 1
+  fi
+}
+
+render_manifest() {
+  local rendered_manifest render_status write_output write_status
+
+  set +e
+  rendered_manifest="$(sed \
+    -e "s/@@NAME@@/$pod_name/g" \
+    -e "s/@@PATH@@/$node_path/g" \
+    "$TEMPLATE_PATH" 2>&1)"
+  render_status=$?
+  set -e
+
+  if [[ "$render_status" -ne 0 ]]; then
+    record_failure "Manifest rendering failed: ${rendered_manifest:-sed failed}" "$render_status"
+    return 1
+  fi
+
+  set +e
+  write_output="$({ printf '%s\n' "$rendered_manifest" >"$manifest_path"; } 2>&1)"
+  write_status=$?
+  set -e
+
+  if [[ "$write_status" -ne 0 ]]; then
+    record_failure "Manifest write failed: ${write_output:-unable to write rendered manifest}" "$write_status"
+    return 1
+  fi
+}
+
 check_standby() {
   local output_path="$1"
   "$CHECK_STANDBY_BIN" \
@@ -120,18 +163,82 @@ check_standby() {
     --interval-seconds 15 >"$output_path"
 }
 
+build_json_artifact() {
+  local label="$1"
+  local command_status="$2"
+  local json_valid="$3"
+  local command_output="${4-}"
+  local error_message
+
+  if [[ "$command_status" -eq 0 && "$json_valid" == "true" ]]; then
+    printf '%s' "$command_output"
+    return 0
+  fi
+
+  if [[ "$command_status" -eq 0 ]]; then
+    error_message="$label returned invalid JSON"
+  else
+    error_message="${command_output:-$label command failed}"
+  fi
+
+  if [[ "$json_valid" == "true" ]]; then
+    jq -n \
+      --argjson command_status "$command_status" \
+      --arg error "$error_message" \
+      --argjson payload "$command_output" \
+      '{
+        ok: false,
+        command_status: $command_status,
+        error: $error,
+        payload: $payload
+      }'
+  else
+    jq -n \
+      --argjson command_status "$command_status" \
+      --arg error "$error_message" \
+      --arg raw_output "$command_output" \
+      '{
+        ok: false,
+        command_status: $command_status,
+        error: $error,
+        raw_output: $raw_output
+      }'
+  fi
+}
+
 capture_diagnostic() {
   local label="$1"
   local output_path="$2"
-  shift 2
-  local diagnostic_output diagnostic_status
+  local output_type="$3"
+  shift 3
+  local diagnostic_output diagnostic_status diagnostic_write_status artifact_output json_valid="false"
   set +e
   diagnostic_output="$("$@" 2>&1)"
   diagnostic_status=$?
   set -e
-  printf '%s\n' "$diagnostic_output" >"$output_path"
+
+  if [[ "$output_type" == "json" ]] && jq -e . >/dev/null 2>&1 <<<"$diagnostic_output"; then
+    json_valid="true"
+  fi
+
+  if [[ "$output_type" == "json" ]]; then
+    artifact_output="$(build_json_artifact "$label" "$diagnostic_status" "$json_valid" "$diagnostic_output")"
+  else
+    artifact_output="$diagnostic_output"
+  fi
+
+  set +e
+  printf '%s' "$artifact_output" >"$output_path"
+  diagnostic_write_status=$?
+  set -e
+  if [[ "$diagnostic_write_status" -ne 0 ]]; then
+    diagnostic_failures+=("$label: unable to write diagnostic artifact: $output_path")
+  fi
+
   if [[ "$diagnostic_status" -ne 0 ]]; then
     diagnostic_failures+=("$label: ${diagnostic_output:-command failed}")
+  elif [[ "$output_type" == "json" && "$json_valid" != "true" ]]; then
+    diagnostic_failures+=("$label: returned invalid JSON")
   fi
 }
 
@@ -140,16 +247,21 @@ capture_diagnostics() {
     return 0
   fi
 
-  capture_diagnostic pod-json "$evidence_dir/pod.json" \
+  capture_diagnostic pod-json "$evidence_dir/pod.json" json \
     "$KUBECTL_BIN" get pod "$pod_name" -n "$namespace" -o json
-  capture_diagnostic pod-yaml "$evidence_dir/pod-live.yaml" \
+  capture_diagnostic pod-yaml "$evidence_dir/pod-live.yaml" text \
     "$KUBECTL_BIN" get pod "$pod_name" -n "$namespace" -o yaml
-  capture_diagnostic events "$evidence_dir/events.txt" \
+  capture_diagnostic events "$evidence_dir/events.txt" text \
     "$KUBECTL_BIN" get events -n "$namespace" --sort-by=.metadata.creationTimestamp
-  capture_diagnostic nodes "$evidence_dir/nodes.json" \
+  capture_diagnostic nodes "$evidence_dir/nodes.json" json \
     "$KUBECTL_BIN" get nodes -o json
-  capture_diagnostic aci-inventory "$evidence_dir/aci-inventory.json" \
+  capture_diagnostic aci-inventory "$evidence_dir/aci-inventory.json" json \
     "$AZ_BIN" container list --resource-group "$resource_group" --output json
+}
+
+is_kubectl_notfound_error() {
+  local output="${1-}"
+  grep -Fq 'Error from server (NotFound):' <<<"$output"
 }
 
 wait_for_namespace_deleted() {
@@ -163,7 +275,7 @@ wait_for_namespace_deleted() {
     set -e
 
     if [[ "$get_status" -ne 0 ]]; then
-      if grep -Eiq '\(NotFound\)|not found' <<<"$output"; then
+      if is_kubectl_notfound_error "$output"; then
         return 0
       fi
       cleanup_reason="Namespace cleanup verification failed: ${output:-kubectl get namespace failed}"
@@ -210,7 +322,11 @@ perform_cleanup() {
 
 write_observation() {
   local node_name_json started_at_json ready_at_json failure_reason_json cleanup_reason_json
-  local standby_pre_json standby_post_json standby_pool_json
+  local standby_pre_json standby_post_json standby_pool_json observation_json write_status
+
+  if [[ ! -d "$observations_dir" ]]; then
+    ensure_directory "Observation directory" "$observations_dir" || return 1
+  fi
 
   node_name_json="$(json_value_or_null "$node_name")"
   started_at_json="$(json_value_or_null "$started_at")"
@@ -221,7 +337,7 @@ write_observation() {
   standby_post_json="$(json_file_or_null "$standby_post_path")"
   standby_pool_json="$(jq -n --argjson pre "$standby_pre_json" --argjson post "$standby_post_json" '{pre: $pre, post: $post}')"
 
-  jq -n \
+  observation_json="$(jq -n \
     --arg scenario "$scenario" \
     --arg namespace "$namespace" \
     --arg pod_name "$pod_name" \
@@ -252,7 +368,17 @@ write_observation() {
         status: $cleanup_status,
         reason: $cleanup_reason
       }
-    }' >"$observation_path"
+    }')"
+
+  set +e
+  printf '%s' "$observation_json" >"$observation_path"
+  write_status=$?
+  set -e
+
+  if [[ "$write_status" -ne 0 ]]; then
+    printf 'ERROR: failed to write observation file: %s\n' "$observation_path" >&2
+    return "$write_status"
+  fi
 }
 
 finalize_run() {
@@ -290,7 +416,12 @@ finalize_run() {
     final_exit_code=1
   fi
 
-  write_observation
+  if ! write_observation; then
+    if [[ "$final_exit_code" -eq 0 ]]; then
+      final_exit_code=1
+    fi
+    exit "$final_exit_code"
+  fi
 
   if [[ "$status" == "ready" ]]; then
     printf '%s Pod became Ready in %s seconds.\n' "$scenario" "$(awk "BEGIN {printf \"%.1f\", $elapsed_ms / 1000}")"
@@ -438,14 +569,17 @@ manifest_path="$evidence_dir/pod.yaml"
 standby_pre_path="$evidence_dir/standby-pre.json"
 standby_post_path="$evidence_dir/standby-post.json"
 
-mkdir -p "$observations_dir" "$evidence_dir"
+ensure_directory "Observation directory" "$observations_dir" || true
 
-sed \
-  -e "s/@@NAME@@/$pod_name/g" \
-  -e "s/@@PATH@@/$node_path/g" \
-  "$TEMPLATE_PATH" >"$manifest_path"
+if [[ -z "$status" ]]; then
+  ensure_directory "Evidence directory" "$evidence_dir" || true
+fi
 
-if [[ "$node_path" == "standby" ]]; then
+if [[ -z "$status" ]]; then
+  render_manifest || true
+fi
+
+if [[ -z "$status" && "$node_path" == "standby" ]]; then
   set +e
   check_standby "$standby_pre_path"
   standby_status=$?

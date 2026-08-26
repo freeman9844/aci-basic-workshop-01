@@ -88,18 +88,30 @@ case "$*" in
     printf '%s\n' 'Normal Scheduled'
     ;;
   "get nodes -o json")
+    if [[ "${FAIL_NODES_JSON:-0}" == "1" ]]; then
+      printf '%s\n' 'nodes list failed' >&2
+      exit 1
+    fi
     printf '%s\n' '{"items":[]}'
     ;;
   "delete namespace "*)
     rm -f "$TEST_STATE_DIR/namespace"
     ;;
   "get namespace "*)
-    if [[ "${NAMESPACE_GET_MODE:-notfound}" == "error" ]]; then
-      printf '%s\n' 'Unable to connect to the server' >&2
-      exit 1
-    fi
-    printf '%s\n' 'Error from server (NotFound): namespaces not found' >&2
-    exit 1
+    case "${NAMESPACE_GET_MODE:-notfound}" in
+      error)
+        printf '%s\n' 'Unable to connect to the server' >&2
+        exit 1
+        ;;
+      lowercase-not-found)
+        printf '%s\n' 'namespace cache entry not found during verification' >&2
+        exit 1
+        ;;
+      *)
+        printf '%s\n' 'Error from server (NotFound): namespaces not found' >&2
+        exit 1
+        ;;
+    esac
     ;;
   *)
     printf 'Unexpected kubectl call: %s\n' "$*" >&2
@@ -119,6 +131,7 @@ reset_logs() {
 reset_behavior() {
   unset APPLY_FAIL
   unset FAIL_AZ_CONTAINER_LIST
+  unset FAIL_NODES_JSON
   unset NAMESPACE_GET_MODE
   unset POD_MODE
   unset POLL_INTERVAL_SECONDS
@@ -137,6 +150,7 @@ run_with_fakes() {
     CHECK_STANDBY_BIN="$TMP/bin/check-standby-pool.sh" \
     APPLY_FAIL="${APPLY_FAIL-}" \
     FAIL_AZ_CONTAINER_LIST="${FAIL_AZ_CONTAINER_LIST-}" \
+    FAIL_NODES_JSON="${FAIL_NODES_JSON-}" \
     NAMESPACE_GET_MODE="${NAMESPACE_GET_MODE-}" \
     POD_MODE="${POD_MODE-}" \
     POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS-}" \
@@ -207,6 +221,35 @@ assert_stdout_lacks_success_footer() {
   fi
 }
 
+assert_json_artifact_failure() {
+  local pattern="$1"
+  local expected_status="$2"
+  local needle="$3"
+
+  python3 - "$pattern" "$expected_status" "$needle" <<'PY'
+import glob
+import json
+import pathlib
+import sys
+
+matches = glob.glob(sys.argv[1])
+if len(matches) != 1:
+    raise SystemExit(matches)
+
+payload = json.loads(pathlib.Path(matches[0]).read_text(encoding="utf-8"))
+if payload.get("ok") is not False:
+    raise SystemExit(payload)
+if payload.get("command_status") != int(sys.argv[2]):
+    raise SystemExit(payload)
+
+needle = sys.argv[3]
+error = payload.get("error") or ""
+raw_output = payload.get("raw_output") or ""
+if needle not in error and needle not in raw_output:
+    raise SystemExit(payload)
+PY
+}
+
 reset_behavior
 reset_logs
 set +e
@@ -260,6 +303,35 @@ for rejected in --runs --pod-count --percentile --baseline; do
   [[ "$status" -eq 64 ]]
   grep -F "ERROR: unsupported argument: $rejected" <<<"$output" >/dev/null
 done
+
+reset_behavior
+reset_logs
+rm -rf "$TMP/setup-failure"
+mkdir -p "$TMP/setup-failure"
+: >"$TMP/setup-failure/evidence"
+set +e
+run_with_fakes \
+  --scenario vn2-ondemand \
+  --resource-group rg-test \
+  --output-dir "$TMP/setup-failure" \
+  >"$TMP/setup-failure.stdout" 2>"$TMP/setup-failure.stderr"
+status=$?
+set -e
+
+[[ "$status" -ne 0 ]]
+assert_observation \
+  "$TMP/setup-failure/observations/vn2-ondemand.json" \
+  "vn2-ondemand" \
+  "failed" \
+  "not-created" \
+  "forbidden"
+assert_failure_reason_contains \
+  "$TMP/setup-failure/observations/vn2-ondemand.json" \
+  'Evidence directory setup failed'
+if grep -Fq 'create namespace ' "$TMP/logs/kubectl.log"; then
+  printf 'expected setup failure to stop before namespace creation\n' >&2
+  exit 1
+fi
 
 reset_behavior
 reset_logs
@@ -374,6 +446,29 @@ assert_failure_reason_contains \
 
 reset_behavior
 reset_logs
+NAMESPACE_GET_MODE=lowercase-not-found
+set +e
+run_with_fakes \
+  --scenario vn2-ondemand \
+  --resource-group rg-test \
+  --output-dir "$TMP/cleanup-lowercase-not-found" \
+  >"$TMP/cleanup-lowercase-not-found.stdout" 2>"$TMP/cleanup-lowercase-not-found.stderr"
+status=$?
+set -e
+
+[[ "$status" -ne 0 ]]
+assert_observation \
+  "$TMP/cleanup-lowercase-not-found/observations/vn2-ondemand.json" \
+  "vn2-ondemand" \
+  "failed" \
+  "failed" \
+  "required"
+assert_failure_reason_contains \
+  "$TMP/cleanup-lowercase-not-found/observations/vn2-ondemand.json" \
+  'Namespace cleanup verification failed'
+
+reset_behavior
+reset_logs
 FAIL_AZ_CONTAINER_LIST=1
 set +e
 run_with_fakes \
@@ -394,7 +489,39 @@ assert_observation \
 assert_failure_reason_contains \
   "$TMP/aci-failure/observations/vn2-ondemand.json" \
   'aci-inventory'
+assert_json_artifact_failure \
+  "$TMP/aci-failure/evidence/vn2-ondemand-*/aci-inventory.json" \
+  1 \
+  'container list failed'
 assert_stdout_lacks_success_footer "$TMP/aci-failure.stdout"
+
+reset_behavior
+reset_logs
+FAIL_NODES_JSON=1
+set +e
+run_with_fakes \
+  --scenario vn2-ondemand \
+  --resource-group rg-test \
+  --output-dir "$TMP/nodes-failure" \
+  >"$TMP/nodes-failure.stdout" 2>"$TMP/nodes-failure.stderr"
+status=$?
+set -e
+
+[[ "$status" -ne 0 ]]
+assert_observation \
+  "$TMP/nodes-failure/observations/vn2-ondemand.json" \
+  "vn2-ondemand" \
+  "failed" \
+  "deleted" \
+  "required"
+assert_failure_reason_contains \
+  "$TMP/nodes-failure/observations/vn2-ondemand.json" \
+  'nodes'
+assert_json_artifact_failure \
+  "$TMP/nodes-failure/evidence/vn2-ondemand-*/nodes.json" \
+  1 \
+  'nodes list failed'
+assert_stdout_lacks_success_footer "$TMP/nodes-failure.stdout"
 
 reset_behavior
 reset_logs
@@ -418,6 +545,10 @@ assert_observation \
 test -s "$TMP/apply-failure/evidence"/vn2-ondemand-*/pod.json
 test -s "$TMP/apply-failure/evidence"/vn2-ondemand-*/events.txt
 test -s "$TMP/apply-failure/evidence"/vn2-ondemand-*/aci-inventory.json
+assert_json_artifact_failure \
+  "$TMP/apply-failure/evidence/vn2-ondemand-*/pod.json" \
+  1 \
+  'pods not found'
 grep -F 'delete namespace ' "$TMP/logs/kubectl.log" >/dev/null
 
 reset_behavior

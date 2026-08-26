@@ -234,5 +234,5 @@ Never pass a wildcard or broad match into cleanup. 참가자는 Portal, `az grou
 
 ## 이전/다음
 
-- 이전: [Module 06](./06-analyze-results.md)
+- 이전: [Module 06](./06-image-cache-hands-on.md)
 - 다음: [README](../README.md)

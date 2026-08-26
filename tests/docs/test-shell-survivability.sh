@@ -25,9 +25,9 @@ documents = [
     root / "docs/01-prerequisites.md",
     root / "docs/02-azure-foundation.md",
     root / "docs/03-install-dual-vn2.md",
-    root / "docs/04-baseline-ondemand-benchmark.md",
-    root / "docs/05-standby-cache-benchmark.md",
-    root / "docs/06-analyze-results.md",
+    root / "docs/04-vn2-ondemand-hands-on.md",
+    root / "docs/05-standby-pool-hands-on.md",
+    root / "docs/06-image-cache-hands-on.md",
     root / "docs/07-limitations-troubleshooting-cleanup.md",
 ]
 

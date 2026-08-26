@@ -452,4 +452,4 @@ az standby-container-group-pool status \
 ## 이전/다음
 
 - 이전: [Module 02](./02-azure-foundation.md)
-- 다음: [Module 04](./04-baseline-ondemand-benchmark.md)
+- 다음: [Module 04](./04-vn2-ondemand-hands-on.md)

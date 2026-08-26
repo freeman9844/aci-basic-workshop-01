@@ -156,9 +156,9 @@ set_valid_defaults() {
   write_file "$TMP/provider-standby.json" '{"namespace":"Microsoft.StandbyPool","registrationState":"Registered"}'
   write_file "$TMP/feature.json" '{"name":"StandbyContainerGroupPoolPreview","properties":{"state":"Registered"}}'
   write_file "$TMP/role-assignments.json" '[{"roleDefinitionName":"Owner","scope":"/providers/Microsoft.Management/managementGroups/example"}]'
-  write_file "$TMP/vm-skus.json" '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[]}]'
-  write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"12","limit":"32"}]'
-  write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20},{"name":{"value":"StandardSpotCores","localizedValue":"Standard spot SKU cores"},"currentValue":0,"limit":20},{"name":{"value":"StandardK80Cores","localizedValue":"Standard K80 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardP100Cores","localizedValue":"Standard P100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardV100Cores","localizedValue":"Standard V100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"DedicatedContainerGroups","localizedValue":"Dedicated container groups"},"currentValue":0,"limit":20},{"name":{"value":"DedicatedCores","localizedValue":"Dedicated cores"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialContainerGroups","localizedValue":"Confidential container groups"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialCores","localizedValue":"Confidential cores"},"currentValue":0,"limit":20}]}'
+  write_file "$TMP/vm-skus.json" '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[]}]'
+  write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"16","limit":"32"}]'
+  write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":18,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":18,"limit":20},{"name":{"value":"StandardSpotCores","localizedValue":"Standard spot SKU cores"},"currentValue":0,"limit":20},{"name":{"value":"StandardK80Cores","localizedValue":"Standard K80 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardP100Cores","localizedValue":"Standard P100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"StandardV100Cores","localizedValue":"Standard V100 GPU cores"},"currentValue":0,"limit":0},{"name":{"value":"DedicatedContainerGroups","localizedValue":"Dedicated container groups"},"currentValue":0,"limit":20},{"name":{"value":"DedicatedCores","localizedValue":"Dedicated cores"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialContainerGroups","localizedValue":"Confidential container groups"},"currentValue":0,"limit":20},{"name":{"value":"ConfidentialCores","localizedValue":"Confidential cores"},"currentValue":0,"limit":20}]}'
   write_file "$TMP/kubectl-version.json" '{"clientVersion":{"gitVersion":"v1.30.2"}}'
   HELM_VERSION='v3.16.1'
   AZ_FEATURE_MODE='registered'
@@ -253,8 +253,7 @@ run_preflight() {
     HELM_VERSION="${HELM_VERSION-v3.16.1}" \
     "$ROOT/scripts/preflight.sh" \
     --location koreacentral \
-    --system-vm-size Standard_D16s_v5 \
-    --nap-vm-size Standard_D4s_v5 "$@"
+    --system-vm-size Standard_D16s_v5 "$@"
 }
 
 set_valid_defaults
@@ -286,18 +285,21 @@ assert payload["subscription_id"] == "00000000-0000-0000-0000-000000000001"
 assert payload["tenant_id"] == "11111111-1111-1111-1111-111111111111"
 assert payload["location"] == "koreacentral"
 assert payload["system_vm_size"] == "Standard_D16s_v5"
-assert payload["nap_vm_size"] == "Standard_D4s_v5"
-assert payload["required_regional_vcpus"] == 20
+assert payload["required_regional_vcpus"] == 16
+assert payload["required_aci_container_groups"] == 2
+assert payload["required_aci_standard_cores"] == 2
 assert payload["azure_cli_version"] == "2.76.0"
 assert payload["kubectl_version"] == "1.30.2"
 assert payload["helm_version"] == "3.16.1"
 assert payload["vn2_chart_version"] == "1.3410.26081102"
-assert payload["benchmark_image"] == "mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
+assert payload["hands_on_image"].endswith("0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826")
+assert "nap_vm_size" not in payload
+assert "benchmark_image" not in payload
 PY
 baseline_environment_json="$(cat "$ENVIRONMENT_JSON")"
 
 set_valid_defaults
-write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":12,"limit":32}]'
+write_file "$TMP/vm-usage.json" '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":16,"limit":32}]'
 numeric_vm_usage_output="$(run_preflight 2>&1)"
 grep -F 'Preflight checks passed.' <<<"$numeric_vm_usage_output" >/dev/null
 test -f "$ENVIRONMENT_JSON"
@@ -309,16 +311,14 @@ assert_vm_usage_failure '[{"name":{"value":"cores","localizedValue":"Total Regio
 assert_vm_usage_failure '[{"name":{"value":"cores","localizedValue":"Total Regional vCPUs"},"currentValue":"101","limit":"100"}]' '"currentValue": "101"' '"limit": "100"'
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20}]}'
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"StandardContainerGroups","localizedValue":"Standard SKU container groups"},"currentValue":18,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":18,"limit":20}]}'
 legacy_success_output="$(run_preflight 2>&1)"
 grep -F 'Preflight checks passed.' <<<"$legacy_success_output" >/dev/null
 test -f "$ENVIRONMENT_JSON"
 
-assert_vm_sku_allowed '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[{"type":"Zone","values":["1"],"reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"],"zones":["1"]}}]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[]}]'
-assert_vm_sku_allowed '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[{"type":"Zone","reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"],"zones":["2"]}}]}]'
+assert_vm_sku_allowed '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[{"type":"Zone","values":["1"],"reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"],"zones":["1"]}}]}]'
 
-assert_vm_sku_location_restricted '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[{"type":"Location","values":["koreacentral"],"reasonCode":"NotAvailableForSubscription"}]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[]}]' 'Standard_D16s_v5'
-assert_vm_sku_location_restricted '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[]},{"name":"Standard_D4s_v5","locations":["koreacentral"],"restrictions":[{"type":"Location","reasonCode":"NotAvailableForSubscription","restrictionInfo":{"locations":["koreacentral"]}}]}]' 'Standard_D4s_v5'
+assert_vm_sku_location_restricted '[{"name":"Standard_D16s_v5","locations":["koreacentral"],"restrictions":[{"type":"Location","values":["koreacentral"],"reasonCode":"NotAvailableForSubscription"}]}]' 'Standard_D16s_v5'
 
 set_valid_defaults
 AZ_FEATURE_MODE='resource-not-found'
@@ -347,27 +347,27 @@ vm_headroom_output="$(run_preflight 2>&1)"
 vm_headroom_status=$?
 set -e
 [[ "$vm_headroom_status" -ne 0 ]]
-grep -F 'regional vCPU headroom is 15; need at least 20' <<<"$vm_headroom_output" >/dev/null
+grep -F 'regional vCPU headroom is 15; need at least 16' <<<"$vm_headroom_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":10,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":11,"limit":20}]}'
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":18,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":19,"limit":20}]}'
 set +e
 aci_core_headroom_output="$(run_preflight 2>&1)"
 aci_core_headroom_status=$?
 set -e
 [[ "$aci_core_headroom_status" -ne 0 ]]
-grep -F 'ACI StandardCores headroom is 9; need at least 10' <<<"$aci_core_headroom_output" >/dev/null
+grep -F 'ACI StandardCores headroom is 1; need at least 2' <<<"$aci_core_headroom_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
-write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":11,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":10,"limit":20}]}'
+write_file "$TMP/aci-usage.json" '{"value":[{"name":{"value":"ContainerGroups","localizedValue":"Container groups"},"currentValue":19,"limit":20},{"name":{"value":"StandardCores","localizedValue":"Standard SKU cores"},"currentValue":18,"limit":20}]}'
 set +e
 aci_group_headroom_output="$(run_preflight 2>&1)"
 aci_group_headroom_status=$?
 set -e
 [[ "$aci_group_headroom_status" -ne 0 ]]
-grep -F 'ACI container groups headroom is 9; need at least 10' <<<"$aci_group_headroom_output" >/dev/null
+grep -F 'ACI container groups headroom is 1; need at least 2' <<<"$aci_group_headroom_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
 
 set_valid_defaults
@@ -487,3 +487,5 @@ set -e
 [[ "$aci_rest_error_status" -ne 0 ]]
 grep -F 'failed to query ACI usage via Azure REST API: simulated az rest failure from test' <<<"$aci_rest_error_output" >/dev/null
 [[ "$(cat "$ENVIRONMENT_JSON")" == "$baseline_environment_json" ]]
+
+printf 'PASS: preflight validates D16 and two-unit ACI headroom\n'

@@ -9,20 +9,19 @@ HELM_BIN="${HELM_BIN:-helm}"
 MIN_AZ_VERSION="2.76.0"
 MIN_KUBECTL_VERSION="1.30.0"
 REQUIRED_HELM_MAJOR="3"
-REQUIRED_VM_VCPU_HEADROOM="20"
-REQUIRED_ACI_GROUP_HEADROOM="10"
-REQUIRED_ACI_CORE_HEADROOM="10"
+REQUIRED_VM_VCPU_HEADROOM="16"
+REQUIRED_ACI_GROUP_HEADROOM="2"
+REQUIRED_ACI_CORE_HEADROOM="2"
 VN2_CHART_VERSION="1.3410.26081102"
-BENCHMARK_IMAGE="mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
+HANDS_ON_IMAGE="mcr.microsoft.com/azure-cli@sha256:0df3dcd6f4342770c2f0992c6c6552297fe8433195372fc2438a7c00bf3fd826"
 
 location=""
 system_vm_size=""
-nap_vm_size=""
 environment_tmp=""
 
 usage() {
   cat <<'EOF'
-Usage: preflight.sh --location LOCATION --system-vm-size SKU --nap-vm-size SKU
+Usage: preflight.sh --location LOCATION --system-vm-size SKU
 EOF
 }
 
@@ -138,11 +137,6 @@ while (($#)); do
       system_vm_size="$2"
       shift 2
       ;;
-    --nap-vm-size)
-      require_value "$1" "${2-}"
-      nap_vm_size="$2"
-      shift 2
-      ;;
     -h|--help)
       usage
       exit 0
@@ -155,7 +149,7 @@ while (($#)); do
   esac
 done
 
-for required in location system_vm_size nap_vm_size; do
+for required in location system_vm_size; do
   if [[ -z "${!required}" ]]; then
     printf 'ERROR: missing required argument: %s\n' "$required" >&2
     usage >&2
@@ -320,7 +314,6 @@ validate_vm_sku() {
 }
 
 validate_vm_sku "$system_vm_size"
-validate_vm_sku "$nap_vm_size"
 
 vm_usage_json="$("$AZ_BIN" vm list-usage --location "$location" --output json)"
 set +e
@@ -446,26 +439,28 @@ jq -n \
   --arg tenant_id "$tenant_id" \
   --arg location "$location" \
   --arg system_vm_size "$system_vm_size" \
-  --arg nap_vm_size "$nap_vm_size" \
   --argjson required_regional_vcpus "$REQUIRED_VM_VCPU_HEADROOM" \
+  --argjson required_aci_container_groups "$REQUIRED_ACI_GROUP_HEADROOM" \
+  --argjson required_aci_standard_cores "$REQUIRED_ACI_CORE_HEADROOM" \
   --arg azure_cli_version "$azure_cli_version" \
   --arg kubectl_version "$kubectl_version" \
   --arg helm_version "$helm_version" \
   --arg vn2_chart_version "$VN2_CHART_VERSION" \
-  --arg benchmark_image "$BENCHMARK_IMAGE" \
+  --arg hands_on_image "$HANDS_ON_IMAGE" \
   '{
     schema_version: 1,
     subscription_id: $subscription_id,
     tenant_id: $tenant_id,
     location: $location,
     system_vm_size: $system_vm_size,
-    nap_vm_size: $nap_vm_size,
     required_regional_vcpus: $required_regional_vcpus,
+    required_aci_container_groups: $required_aci_container_groups,
+    required_aci_standard_cores: $required_aci_standard_cores,
     azure_cli_version: $azure_cli_version,
     kubectl_version: $kubectl_version,
     helm_version: $helm_version,
     vn2_chart_version: $vn2_chart_version,
-    benchmark_image: $benchmark_image
+    hands_on_image: $hands_on_image
   }' >"$environment_tmp"
 mv "$environment_tmp" "$results_dir/environment.json"
 environment_tmp=""

@@ -4,7 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 python3 - "$ROOT" <<'PY'
+import os
 import re
+import shutil
+import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -20,6 +24,7 @@ prereq_text = prereq.read_text(encoding="utf-8")
 foundation_text = foundation.read_text(encoding="utf-8")
 
 required_prereq = [
+    "15분",
     "az provider register --namespace Microsoft.ContainerInstance --wait",
     "az provider register --namespace Microsoft.StandbyPool --wait",
     "StandbyContainerGroupPoolPreview",
@@ -46,40 +51,39 @@ required_prereq = [
     "No guessing beyond these two container group quota names is allowed.",
     "Other ACI quota rows are informational only.",
     "preflight gates only on exactly one container group alias plus exactly one `StandardCores` row",
-    "need at least 10 available container groups and 10 available StandardCores",
-    "5 warm standby instances while 5 benchmark Pods are active or refilling",
     "SP_OBJECT_ID=\"$(az ad sp list",
     "test -n \"$SP_OBJECT_ID\"",
     "Azure CLI 2.76.0",
     "--system-vm-size Standard_D16s_v5",
-    "--nap-vm-size Standard_D4s_v5",
-    "managed identity",
-    "Standard Load Balancer",
-    "NAP CRDs",
-    "combined regional vCPU headroom of 20",
+    "16 regional vCPU",
+    "2 available container groups and 2 available StandardCores",
+    "one ready standby instance plus one active or refilling workload instance",
+    "production sizing recommendation",
     "cat results/environment.json",
     "Preflight checks passed.",
     "subshell keeps the interactive parent Cloud Shell safe",
-    "regional vCPU headroom is 15; need at least 20",
+    "regional vCPU headroom is 15; need at least 16",
 ]
 
 required_foundation = [
+    "30분",
     "WORKSHOP_STATE=\"results/workshop.env\"",
     "STATE_TMP=\"${WORKSHOP_STATE}.tmp.$$\"",
     "LOCATION=\"koreacentral\"",
-    "RG=\"rg-vn2-bench-$RANDOM\"",
-    "VNET=\"vnet-vn2-bench\"",
+    "RG=\"rg-vn2-hands-on-$RANDOM\"",
+    "VNET=\"vnet-vn2-hands-on\"",
     "AKS_SUBNET=\"snet-aks\"",
     "CG_SUBNET=\"cg\"",
-    "AKS_IDENTITY=\"id-aks-vn2-bench\"",
+    "NAT_NAME=\"nat-vn2-hands-on\"",
+    "NAT_PIP_NAME=\"pip-vn2-hands-on\"",
+    "AKS=\"aks-vn2-hands-on\"",
+    "AKS_IDENTITY=\"id-aks-vn2-hands-on\"",
     "AKS_IDENTITY_ID",
-    "NAP_VM_SIZE=\"Standard_D4s_v5\"",
-    "NAP_NODEPOOL=\"workshop-nap\"",
     "Azure CNI, Standard Load Balancer, user-assigned managed identity, NAP Auto",
     "Module 01의 `results/environment.json` 이 이미 `Standard_D16s_v5` 와 `koreacentral` 을 검증했더라도",
     "VM_SIZE=\"Standard_D16s_v5\"",
     "fixed system node",
-    "NAP benchmark NodePool",
+    "NAP은 활성화하지만 이 workshop에서는 custom NodePool을 만들지 않습니다.",
     "--query \"values[?version=='1.34'].patchVersions | [0]\"",
     "jq -r 'if type==\"object\" then (keys_unsorted | map(select(startswith(\"1.34.\"))) | sort_by(split(\".\")|map(tonumber)) | last // \"\") else \"\" end'",
     "test -n \"$K8S_VERSION\"",
@@ -101,8 +105,12 @@ required_foundation = [
     "VNET_ID=\"$(az network vnet show",
     "--role \"Network Contributor\"",
     "--scope \"$VNET_ID\"",
+    "AKS_SUBNET_ID=\"$(az network vnet subnet show",
     "az aks create",
+    "--nodepool-name system",
+    "--node-count 1",
     "--network-plugin azure",
+    "--vnet-subnet-id \"$AKS_SUBNET_ID\"",
     "--node-vm-size \"$VM_SIZE\"",
     "--kubernetes-version \"$K8S_VERSION\"",
     "--service-cidr 172.16.0.0/16",
@@ -113,19 +121,13 @@ required_foundation = [
     "--assign-identity \"$AKS_IDENTITY_ID\"",
     "identityProfile.kubeletidentity.objectId",
     "nodeResourceGroup",
+    "WORKSHOP_RG_ID=\"$(az group show -n \"$RG\" --query id -o tsv)\"",
     "az role assignment create",
     "--role Contributor",
     "az aks get-credentials",
-    "sed \"s|@@AKS_SUBNET_ID@@|$AKS_SUBNET_ID|g\"",
-    "manifests/nap-workshop-template.yaml",
-    "kubectl apply -f results/nap-workshop.yaml",
-    "kubectl wait --for=condition=Ready nodepool/\"$NAP_NODEPOOL\" --timeout=10m",
-    "kubectl get nodepool workshop-nap",
-    "kubectl get nodes -l karpenter.sh/nodepool=workshop-nap",
-    "./scripts/check-nap-capacity.sh",
-    "--name \"$NAP_NODEPOOL\"",
-    "--expect-nodes 0",
-    "--expect-nodeclaims 0",
+    "az aks show -g \"$RG\" -n \"$AKS\" \\",
+    "--query '{nodeProvisioningMode:nodeProvisioningProfile.mode,nodeResourceGroup:nodeResourceGroup}'",
+    "kubectl get nodes -o wide",
     "printf 'export LOCATION=%q\\n' \"$LOCATION\"",
     "printf 'export RG=%q\\n' \"$RG\"",
     "printf 'export VNET=%q\\n' \"$VNET\"",
@@ -137,13 +139,27 @@ required_foundation = [
     "printf 'export VM_SIZE=%q\\n' \"$VM_SIZE\"",
     "printf 'export AKS_IDENTITY=%q\\n' \"$AKS_IDENTITY\"",
     "printf 'export AKS_IDENTITY_ID=%q\\n' \"$AKS_IDENTITY_ID\"",
-    "printf 'export NAP_VM_SIZE=%q\\n' \"$NAP_VM_SIZE\"",
-    "printf 'export NAP_NODEPOOL=%q\\n' \"$NAP_NODEPOOL\"",
     "printf 'export K8S_VERSION=%q\\n' \"$K8S_VERSION\"",
     "chmod 600 \"$STATE_TMP\"",
     "mv \"$STATE_TMP\" \"$WORKSHOP_STATE\"",
     "source \"$WORKSHOP_STATE\"",
     "results/workshop.env is the authoritative workshop state",
+]
+
+forbidden_active_modules = [
+    "--nap-vm-size",
+    "Standard_D4s_v5",
+    "NAP_VM_SIZE",
+    "NAP_NODEPOOL",
+    "AKSNodeClass",
+    "manifests/nap-workshop-template.yaml",
+    "kubectl apply -f results/nap-workshop.yaml",
+    "check-nap-capacity.sh",
+    "kubectl get nodeclaims",
+    "kubectl get crd",
+    "aksnodeclasses.karpenter.azure.com",
+    "nodepools.karpenter.sh",
+    "nodeclaims.karpenter.sh",
 ]
 
 stale_aks_path = "benchmark-path=" + "aks"
@@ -158,7 +174,6 @@ forbidden_foundation = [
     stale_aks_path + " --overwrite",
     "kubectl label node",
     "VM_SIZE=\"${VM_SIZE:-Standard_D16s_v5}\"",
-    "NAP_VM_SIZE=\"${NAP_VM_SIZE:-Standard_D4s_v5}\"",
 ]
 
 for item in required_prereq:
@@ -169,12 +184,17 @@ for item in required_foundation:
     if item not in foundation_text:
         raise SystemExit(f"docs/02-azure-foundation.md is missing required text: {item}")
 
+for path, text in ((prereq, prereq_text), (foundation, foundation_text)):
+    for item in forbidden_active_modules:
+        if item in text:
+            raise SystemExit(f"{path.name} must not contain outdated text: {item}")
+
 for item in forbidden_foundation:
     if item in foundation_text:
         raise SystemExit(f"docs/02-azure-foundation.md must not contain outdated text: {item}")
 
 for path, text in ((prereq, prereq_text), (foundation, foundation_text)):
-    for heading in ("## 완료 체크포인트", "## 문제 해결", "## 이전/다음"):
+    for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 문제 해결", "## 이전/다음"):
         if heading not in text:
             raise SystemExit(f"{path.name} is missing required section: {heading}")
 
@@ -223,24 +243,44 @@ ordered_foundation_operations = [
     "--role \"Network Contributor\"",
     "az aks create",
     "identityProfile.kubeletidentity.objectId",
-    "manifests/nap-workshop-template.yaml",
-    "kubectl apply -f results/nap-workshop.yaml",
-    "./scripts/check-nap-capacity.sh",
+    "az aks get-credentials",
+    "--query '{nodeProvisioningMode:nodeProvisioningProfile.mode,nodeResourceGroup:nodeResourceGroup}'",
+    "kubectl get nodes -o wide",
 ]
-positions = [foundation_text.index(item) for item in ordered_foundation_operations]
+steps_match = re.search(
+    r"## 진행 순서\n(.*?)(?=\n## 완료 체크포인트)",
+    foundation_text,
+    re.S,
+)
+if not steps_match:
+    raise SystemExit("docs/02-azure-foundation.md is missing the foundation steps section")
+
+foundation_steps_text = steps_match.group(1)
+positions = [foundation_steps_text.index(item) for item in ordered_foundation_operations]
 if positions != sorted(positions):
-    raise SystemExit("docs/02-azure-foundation.md must keep the supported NAP foundation operations in order")
+    raise SystemExit("docs/02-azure-foundation.md must keep the supported hands-on foundation operations in order")
 
 code_block_pattern = re.compile(r"```bash\n(.*?)```", re.S)
+protected_set_pattern = re.compile(r"^\(\s*set -(?:e|u|euo pipefail)\b")
+bare_set_pattern = re.compile(r"^set -(?:e|u|euo pipefail)\b")
 for path, text in ((prereq, prereq_text), (foundation, foundation_text)):
     blocks = code_block_pattern.findall(text)
     if not blocks:
         raise SystemExit(f"{path.name} must contain bash code blocks")
     for block in blocks:
+        protected_depth = 0
         for line in block.splitlines():
-            if line.strip() in {"set -euo pipefail", "set -e", "set -u"}:
+            stripped = line.strip()
+            if protected_set_pattern.match(stripped):
+                protected_depth += 1
+                continue
+            if stripped == ")" and protected_depth:
+                protected_depth -= 1
+                continue
+            normalized = stripped.split("#", 1)[0].rstrip().rstrip(";")
+            if bare_set_pattern.match(normalized) and protected_depth == 0:
                 raise SystemExit(
-                    f"{path.name} must not leave interactive parent shell options enabled with bare line: {line.strip()}"
+                    f"{path.name} must not leave interactive parent shell options enabled with bare line: {stripped}"
                 )
         if path == foundation and "persist_workshop_state" in block and "persist_workshop_state()" not in block:
             raise SystemExit(
@@ -250,4 +290,169 @@ for path, text in ((prereq, prereq_text), (foundation, foundation_text)):
 if "results/workshop.env" not in foundation_text:
     raise SystemExit("docs/02-azure-foundation.md must persist results/workshop.env")
 
+
+def extract_first_bash_block(step_heading: str) -> str:
+    section_match = re.search(
+        rf"{re.escape(step_heading)}\n(.*?)(?=\n### \d+\)|\n## 완료 체크포인트)",
+        foundation_text,
+        re.S,
+    )
+    if not section_match:
+        raise SystemExit(f"docs/02-azure-foundation.md is missing step section: {step_heading}")
+
+    block_match = re.search(r"```bash\n(.*?)```", section_match.group(1), re.S)
+    if not block_match:
+        raise SystemExit(f"docs/02-azure-foundation.md must contain a bash block in step: {step_heading}")
+
+    return block_match.group(1)
+
+
+step1_block = extract_first_bash_block("### 1) 고정 변수와 지원되는 Kubernetes 1.34 패치 선택")
+scratch = root / ".test-doc-prerequisites-foundation-state"
+if scratch.exists():
+    shutil.rmtree(scratch)
+
+try:
+    recovery_home = scratch / "home"
+    workshop = recovery_home / "aci-vn2-performance-workshop"
+    fake_bin = scratch / "bin"
+    fake_bin.mkdir(parents=True)
+    (workshop / "results").mkdir(parents=True)
+
+    state_path = workshop / "results" / "workshop.env"
+    state_path.write_text(
+        "\n".join(
+            [
+                "export LOCATION='stale-location'",
+                "export RG='stale-rg'",
+                "export NAP_VM_SIZE='stale-d4'",
+                "export NAP_NODEPOOL='stale-pool'",
+                "export K8S_VERSION='stale-version'",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    fake_az = fake_bin / "az"
+    fake_az.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'if [[ "${1-}" == "aks" && "${2-}" == "get-versions" ]]; then',
+                "  printf '%s\\n' '{\"1.34.11\":{\"upgrades\":[\"1.34.12\"]},\"1.34.12\":{\"upgrades\":[]}}'",
+                "  exit 0",
+                "fi",
+                'printf "unexpected az invocation: %s\\n" "$*" >&2',
+                "exit 99",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    fake_az.chmod(0o755)
+
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    "umask 0022",
+                    'before="$(umask)"',
+                    step1_block,
+                    'after="$(umask)"',
+                    'if [[ "$after" != "$before" ]]; then',
+                    '  printf "step 1 changed parent umask from %s to %s\\n" "$before" "$after" >&2',
+                    "  exit 1",
+                    "fi",
+                ]
+            ),
+        ],
+        check=True,
+        cwd=root,
+        env={**os.environ, "HOME": str(recovery_home), "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+        text=True,
+        capture_output=True,
+    )
+
+    state_text = state_path.read_text(encoding="utf-8")
+    expected_keys = {
+        "LOCATION",
+        "RG",
+        "VNET",
+        "AKS_SUBNET",
+        "CG_SUBNET",
+        "NAT_NAME",
+        "NAT_PIP_NAME",
+        "AKS",
+        "VM_SIZE",
+        "AKS_IDENTITY",
+        "AKS_IDENTITY_ID",
+        "K8S_VERSION",
+    }
+    for key in expected_keys:
+        if state_text.count(f"export {key}=") != 1:
+            raise SystemExit(f"Step 1 must leave exactly one export for {key}")
+
+    for forbidden_key in ("NAP_VM_SIZE", "NAP_NODEPOOL"):
+        if f"export {forbidden_key}=" in state_text:
+            raise SystemExit(f"Step 1 must not persist removed key {forbidden_key}")
+
+    for stale in ("stale-location", "stale-rg", "stale-d4", "stale-pool", "stale-version"):
+        if stale in state_text:
+            raise SystemExit(f"Step 1 must replace stale workshop state; found {stale}")
+
+    file_mode = stat.S_IMODE(state_path.stat().st_mode)
+    if file_mode != 0o600:
+        raise SystemExit(f"Step 1 must leave results/workshop.env mode 600, found {oct(file_mode)}")
+
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            "\n".join(
+                [
+                    "set -euo pipefail",
+                    "source results/workshop.env",
+                    ': "${LOCATION:?missing LOCATION}"',
+                    ': "${RG:?missing RG}"',
+                    ': "${VNET:?missing VNET}"',
+                    ': "${AKS_SUBNET:?missing AKS_SUBNET}"',
+                    ': "${CG_SUBNET:?missing CG_SUBNET}"',
+                    ': "${NAT_NAME:?missing NAT_NAME}"',
+                    ': "${NAT_PIP_NAME:?missing NAT_PIP_NAME}"',
+                    ': "${AKS:?missing AKS}"',
+                    ': "${VM_SIZE:?missing VM_SIZE}"',
+                    ': "${AKS_IDENTITY:?missing AKS_IDENTITY}"',
+                    ': "${K8S_VERSION:?missing K8S_VERSION}"',
+                    '[[ "$LOCATION" == "koreacentral" ]]',
+                    '[[ "$RG" =~ ^rg-vn2-hands-on-[0-9]+$ ]]',
+                    '[[ "$VNET" == "vnet-vn2-hands-on" ]]',
+                    '[[ "$AKS_SUBNET" == "snet-aks" ]]',
+                    '[[ "$CG_SUBNET" == "cg" ]]',
+                    '[[ "$NAT_NAME" == "nat-vn2-hands-on" ]]',
+                    '[[ "$NAT_PIP_NAME" == "pip-vn2-hands-on" ]]',
+                    '[[ "$AKS" == "aks-vn2-hands-on" ]]',
+                    '[[ "$VM_SIZE" == "Standard_D16s_v5" ]]',
+                    '[[ "$AKS_IDENTITY" == "id-aks-vn2-hands-on" ]]',
+                    'if [[ -n "${AKS_IDENTITY_ID:-}" ]]; then',
+                    '  printf "step 1 should persist empty AKS_IDENTITY_ID before identity creation\\n" >&2',
+                    "  exit 1",
+                    "fi",
+                    '[[ "$K8S_VERSION" == "1.34.12" ]]',
+                ]
+            ),
+        ],
+        check=True,
+        cwd=workshop,
+        text=True,
+    )
+finally:
+    if scratch.exists():
+        shutil.rmtree(scratch)
+
+print("PASS: prerequisites and foundation docs match the simplified hands-on NAP flow")
 PY

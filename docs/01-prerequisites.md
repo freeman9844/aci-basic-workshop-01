@@ -9,12 +9,12 @@
 
 - 전용 교육용 구독, Owner 권한, provider 등록, feature/GA 상태를 fail-fast로 확인할 수 있습니다.
 - `Standby Pool Resource Provider` 서비스 주체에 필요한 세 가지 구독 역할을 정확히 부여할 수 있습니다.
-- `./scripts/preflight.sh` 로 Azure CLI 2.76.0 이상, `Standard_D16s_v5`, `Standard_D4s_v5`, quota headroom을 검증할 수 있습니다.
+- `./scripts/preflight.sh` 로 Azure CLI 2.76.0 이상, `Standard_D16s_v5`, 16 regional vCPU, 2 available container groups and 2 available StandardCores를 검증할 수 있습니다.
 - `results/environment.json` 을 다음 모듈의 기준 입력으로 보존할 수 있습니다.
 
 ## 예상 소요 시간
 
-20분
+15분
 
 ## 시작 전 상태
 
@@ -37,9 +37,9 @@
 ## 진행 순서
 
 1. 현재 Azure 구독이 실습용 전용 구독인지 확인하고 provider를 미리 등록합니다.
-2. 과거 `StandbyContainerGroupPoolPreview` feature가 필요한 구독과 현재 GA 상태를 모두 안전하게 처리합니다.
+2. 과거 `StandbyContainerGroupPoolPreview` feature가 필요했던 구독과 현재 GA 상태를 모두 안전하게 처리합니다.
 3. `Standby Pool Resource Provider` 서비스 주체에 구독 범위 역할 세 개를 부여합니다.
-4. `scripts/preflight.sh` 로 Azure CLI 2.76.0 이상, Owner 권한, provider 등록, quota, 두 VM SKU를 fail-fast 검증합니다.
+4. `scripts/preflight.sh` 로 Azure CLI 2.76.0 이상, Owner 권한, provider 등록, 16 regional vCPU, 2 available container groups and 2 available StandardCores를 fail-fast 검증합니다.
 5. `results/environment.json` 을 확인하고 다음 모듈에서 그대로 재사용합니다.
 6. 모든 fail-fast 블록은 subshell keeps the interactive parent Cloud Shell safe 원칙으로 감쌉니다.
 
@@ -79,7 +79,7 @@ mkdir -p results
     --name StandbyContainerGroupPoolPreview \
     --output json 2>"$FEATURE_ERROR_FILE")"
   FEATURE_RC=$?
-  set -e;
+  set -e
 
   if [[ "$FEATURE_RC" -eq 0 ]]; then
     FEATURE_STATE="$(jq -r '.properties.state' <<<"$FEATURE_JSON")"
@@ -113,7 +113,7 @@ mkdir -p results
 
 👁️ **설명**
 
-공개 MCR 이미지를 쓰더라도 Standby Pool Resource Provider 서비스 주체에는 구독 범위 역할 세 개가 필요합니다.
+공개 MCR 이미지를 쓰더라도 `Standby Pool Resource Provider` 서비스 주체에는 구독 범위 역할 세 개가 필요합니다. VN2와 Standby Pool이 어느 단계에서 어떤 권한을 쓰는지까지 같이 기억해 둡니다.
 
 🟢 **실행**
 
@@ -160,9 +160,9 @@ Azure CLI는 built-in role 표시 이름을 부분 추정하지 않으므로 `Az
 
 필수 역할은 다음 세 가지입니다.
 
-- `Azure Container Instances Contributor Role`
-- `Standby Container Group Pool Contributor`
-- `Network Contributor`
+- `Azure Container Instances Contributor Role`: VN2가 ACI-backed virtual node 경로를 만들고 제거할 때 사용합니다.
+- `Standby Container Group Pool Contributor`: Standby Pool이 ready instance를 만들고 유지할 때 사용합니다.
+- `Network Contributor`: VN2와 Standby Pool이 workshop VNet/subnet 리소스를 연결할 때 필요합니다.
 
 ### 3) 실습 시작 직전: preflight 실행과 결과 확인
 
@@ -176,18 +176,16 @@ Azure CLI는 built-in role 표시 이름을 부분 추정하지 않으므로 `Az
 cd ~/aci-vn2-performance-workshop
 
 ( set -euo pipefail
-  az account show --output table
   ./scripts/preflight.sh \
     --location koreacentral \
-    --system-vm-size Standard_D16s_v5 \
-    --nap-vm-size Standard_D4s_v5
+    --system-vm-size Standard_D16s_v5
   cat results/environment.json
 )
 ```
 
 👁️ **설명**
 
-NAP에는 Azure CLI 2.76.0 이상과 managed identity, Standard Load Balancer가 필요합니다. 클러스터 생성 후에는 managed NAP controller와 NAP CRDs가 준비되었는지도 Module 02에서 확인합니다. 이 preflight는 고정 system node용 `Standard_D16s_v5`와 NAP node용 `Standard_D4s_v5`를 각각 검사하고, 두 VM을 동시에 만들 수 있도록 combined regional vCPU headroom of 20을 요구합니다.
+이 preflight의 active 계약은 workshop의 고정 system node 한 대와 최소 live ACI headroom만 검증합니다. `16 regional vCPU`는 `Standard_D16s_v5` system node 한 대를 위한 최소 여유분이고, `2 available container groups and 2 available StandardCores` 는 one ready standby instance plus one active or refilling workload instance를 동시에 수용하기 위한 hands-on 최소 안전선입니다. 이 수치는 production sizing recommendation이 아니라 참가자 실습을 fail-fast로 시작하기 위한 기준입니다.
 
 📋 **예상 출력**
 
@@ -197,7 +195,7 @@ NAP에는 Azure CLI 2.76.0 이상과 managed identity, Standard Load Balancer가
 Preflight checks passed.
 ```
 
-이후 `results/environment.json` 에 subscription, tenant, tool version, pinned VN2 chart version, benchmark image digest가 기록되어 있어야 합니다.
+이후 `results/environment.json` 에 subscription, tenant, tool version, pinned VN2 chart version, hands_on_image digest가 기록되어 있어야 합니다.
 
 실패 예시는 다음과 같습니다.
 
@@ -214,7 +212,7 @@ ERROR: StandbyContainerGroupPoolPreview is not registered. Run: az feature regis
 regional VM quota가 모자라면 다음처럼 멈춰야 정상입니다.
 
 ```text
-ERROR: regional vCPU headroom is 15; need at least 20
+ERROR: regional vCPU headroom is 15; need at least 16
 ```
 
 ⚠️ **주의**
@@ -229,7 +227,7 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 - `Standby Pool Resource Provider` 서비스 주체에 세 가지 구독 역할이 부여되었다.
 - Cloud Shell 또는 로컬 Bash 환경에서 필수 도구가 모두 실행된다.
 - Azure CLI 2.76.0 이상이 설치되어 있다.
-- `./scripts/preflight.sh --location koreacentral --system-vm-size Standard_D16s_v5 --nap-vm-size Standard_D4s_v5` 가 성공했다.
+- `./scripts/preflight.sh --location koreacentral --system-vm-size Standard_D16s_v5` 가 성공했다.
 - `results/environment.json` 파일이 생성되었다.
 - fail-fast 블록이 끝난 뒤에도 interactive parent Cloud Shell 에는 persistent `set -e` / `set -u` 가 남지 않는다.
 - quota 부족, Owner 누락, provider 미등록 시 어떤 항목을 먼저 고쳐야 하는지 메모했다.
@@ -242,12 +240,12 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 | `ResourceNotFound` 가 feature show 에서 반환됨 | GA 전환 여부 | `grep -i ResourceNotFound results/standby-feature-show.stderr.log` | 오류가 아니라면 provider Registered 만 확인하고 계속 진행 |
 | `Standby Pool Resource Provider service principal was not found.` | Entra 조회 결과 | `az ad sp list --display-name 'Standby Pool Resource Provider' --output table` | display name 오타 여부 확인, 필요 시 관리자와 구독 상태 확인 |
 | `Role 'Azure Container Instances Contributor' doesn't exist` 또는 role assignment create 가 실패함 | exact role definition name, 현재 사용자 권한 | `az role definition list --name 'Azure Container Instances Contributor Role' --output table` | `Azure Container Instances Contributor Role` 로 다시 실행하고, 그래도 실패하면 전용 교육용 구독 Owner 로 다시 로그인 |
-| preflight가 quota 또는 SKU 부족으로 실패함 | Korea Central 가용량 | `./scripts/preflight.sh --location koreacentral --system-vm-size Standard_D16s_v5 --nap-vm-size Standard_D4s_v5` | combined regional vCPU headroom 20과 두 SKU 가용성을 먼저 해결한 뒤 다시 시작 |
+| preflight가 quota 또는 SKU 부족으로 실패함 | Korea Central 가용량 | `./scripts/preflight.sh --location koreacentral --system-vm-size Standard_D16s_v5` | 16 regional vCPU와 2 available container groups and 2 available StandardCores를 먼저 확보한 뒤 다시 시작 |
 
 ACI quota 증적이 필요하면 preflight와 같은 REST 경로를 직접 조회합니다. `az container list-usage` 는 현재 Azure CLI에 없으므로 사용하지 않습니다.
 현재 API 응답은 `ContainerGroups` 를 노출할 수 있고, 과거 응답은 `StandardContainerGroups` 를 노출할 수 있습니다. In other words, the current API may expose `ContainerGroups`, and historical responses may expose `StandardContainerGroups`. No guessing beyond these two container group quota names is allowed.
 Other ACI quota rows are informational only. Live Korea Central responses can also include `StandardSpotCores`, `StandardK80Cores`, `StandardP100Cores`, `StandardV100Cores`, `DedicatedContainerGroups`, `DedicatedCores`, `ConfidentialContainerGroups`, and `ConfidentialCores`, but preflight gates only on exactly one container group alias plus exactly one `StandardCores` row. That means unrelated rows must not block the workshop by themselves.
-워크숍 피크는 5 warm standby instances while 5 benchmark Pods are active or refilling 상황까지 포함하므로, preflight는 need at least 10 available container groups and 10 available StandardCores 기준으로만 통과시킵니다. 이 10 headroom은 standby refill 중에도 다음 benchmark batch를 막지 않기 위한 최소 안전선입니다.
+이 hands-on은 one ready standby instance plus one active or refilling workload instance를 동시에 감당할 최소 안전선만 확인하므로, preflight는 need at least 2 available container groups and 2 available StandardCores 기준으로만 통과시킵니다. 이 값은 참가자 실습 흐름을 위한 하한선이지 일반적인 production sizing recommendation이 아닙니다.
 
 ```bash
 SUB_ID="$(az account show --query id -o tsv)"

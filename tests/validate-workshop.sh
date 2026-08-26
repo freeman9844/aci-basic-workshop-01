@@ -198,7 +198,7 @@ for path in sorted(python_paths):
 readme_text = (root / "README.md").read_text(encoding="utf-8")
 module_rows = {}
 for line in readme_text.splitlines():
-    match = re.match(r"^\|\s*Module\s+(\d{2})\s*\|.*\|\s*(\d+)분\s*\|", line)
+    match = re.match(r"^\|\s*(\d{2})\s*\|.*\|\s*(\d+)분\s*\|", line)
     if match:
         module_rows[match.group(1)] = int(match.group(2))
 

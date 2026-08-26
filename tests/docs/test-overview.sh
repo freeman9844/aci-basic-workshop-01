@@ -27,6 +27,8 @@ if missing:
 readme_text = readme.read_text(encoding="utf-8")
 required_readme_strings = [
     "# ACI Basic 워크솝",
+    "## 모듈 목차",
+    "필수 경로는 Module 01 → 07 순서로 진행합니다.",
     "120분",
     "Pod 1개를 한 번",
     "성능 benchmark가 아닙니다",
@@ -49,6 +51,10 @@ for required in required_readme_strings:
 for removed_heading in ("## 빠른 시작", "## 세션 복구 가이드"):
     if removed_heading in readme_text:
         raise SystemExit(f"README must not contain removed section: {removed_heading}")
+
+for replaced_heading in ("## 모듈 구성", "## 문서 흐름", "## 시간표"):
+    if replaced_heading in readme_text:
+        raise SystemExit(f"README must consolidate the replaced section into 모듈 목차: {replaced_heading}")
 
 for forbidden in (
     "180분",
@@ -74,7 +80,7 @@ for scenario in ("vn2-ondemand", "vn2-standby", "vn2-standby-cached"):
 
 module_rows = {}
 for line in readme_text.splitlines():
-    match = re.match(r"^\|\s*Module\s+(\d{2})\s*\|.*\|\s*(\d+)분\s*\|", line)
+    match = re.match(r"^\|\s*(\d{2})\s*\|.*\|\s*(\d+)분\s*\|", line)
     if match:
         module_rows[match.group(1)] = int(match.group(2))
 

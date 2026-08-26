@@ -104,9 +104,8 @@ required_readme_sections = (
     "## 아키텍처",
     "## 학습 목표",
     "## 사전 요구사항",
-    "## 모듈 구성",
+    "## 모듈 목차",
     "## 완료 기준",
-    "## 시간표",
     "## 비용 개요",
     "## 태그 범례",
     "## 트러블슈팅 색인",
@@ -124,11 +123,15 @@ if not prereq_table_pattern.search(readme_text):
     fail("README.md must present prerequisites as a table")
 
 module_table_pattern = re.compile(
-    r"## 모듈 구성.*?\n\|\s*Module\s*\|\s*주제\s*\|\s*시간\s*\|\s*결과\s*\|",
+    r"## 모듈 목차.*?\n\|\s*#\s*\|\s*모듈\s*\|\s*한 줄 설명\s*\|\s*시간\s*\|",
     re.S,
 )
 if not module_table_pattern.search(readme_text):
-    fail("README.md must include the module outcome/time table")
+    fail("README.md must include the linked module table of contents")
+
+for replaced_heading in ("## 모듈 구성", "## 문서 흐름", "## 시간표"):
+    if replaced_heading in readme_text:
+        fail(f"README.md must consolidate the replaced section into 모듈 목차: {replaced_heading}")
 
 for row in legend_rows:
     if row not in readme_text:

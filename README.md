@@ -68,31 +68,21 @@ flowchart TB
 
 ---
 
-## 모듈 구성
+## 모듈 목차
 
-| Module | 주제 | 시간 | 결과 |
-| --- | --- | ---: | --- |
-| Module 00 | 개요와 VN2 lifecycle | 5분 | 세 경로와 비-benchmark 관찰 기준 이해 |
-| Module 01 | 사전 요구사항 | 15분 | D16, ACI 2-unit, provider, 권한 검증 |
-| Module 02 | Azure/AKS foundation | 30분 | NAP-enabled fixed-node AKS 생성 |
-| Module 03 | Dual VN2와 StandbyPool | 20분 | OnDemand/Standby virtual node와 ready 1 준비 |
-| Module 04 | VN2 OnDemand hands-on | 10분 | Pod 1개 create-to-Ready 관찰 |
-| Module 05 | StandbyPool hands-on | 15분 | warm Pod 1개와 refill 관찰 |
-| Module 06 | Image Cache hands-on | 15분 | pool 1→0→1 후 cached Pod 1개 관찰 |
-| Module 07 | 회고와 cleanup | 10분 | 세 관찰 해석과 전체 삭제 |
-|  | **합계** | **120분** |  |
+필수 경로는 Module 01 → 07 순서로 진행합니다. Module 04에서 VN2 OnDemand, Module 05에서 StandbyPool, Module 06에서 Image Cache와 pool `1→0→1` lifecycle을 각각 직접 관찰한 뒤 Module 07에서 결과를 회고하고 전체 리소스를 cleanup합니다.
 
----
-
-## 문서 흐름
-
-1. [Module 01](docs/01-prerequisites.md) — 구독, provider, 권한, quota preflight
-2. [Module 02](docs/02-azure-foundation.md) — identity, VNet, NAT, AKS foundation
-3. [Module 03](docs/03-install-dual-vn2.md) — dual VN2 install과 standby ready 1 준비
-4. [Module 04](docs/04-vn2-ondemand-hands-on.md) — VN2 OnDemand observation
-5. [Module 05](docs/05-standby-pool-hands-on.md) — StandbyPool observation
-6. [Module 06](docs/06-image-cache-hands-on.md) — Image Cache observation
-7. [Module 07](docs/07-limitations-troubleshooting-cleanup.md) — review, troubleshooting, cleanup
+| # | 모듈 | 한 줄 설명 | 시간 |
+|---:|------|------------|-----:|
+| 00 | [워크숍 개요와 VN2 lifecycle](README.md) | 세 경로와 비-benchmark 관찰 기준을 이해합니다. | 5분 |
+| 01 | [사전 요구사항](docs/01-prerequisites.md) | D16, ACI 2-unit, provider, 권한을 검증합니다. | 15분 |
+| 02 | [Azure/AKS foundation](docs/02-azure-foundation.md) | NAP-enabled fixed-node AKS foundation을 생성합니다. | 30분 |
+| 03 | [Dual VN2와 StandbyPool](docs/03-install-dual-vn2.md) | OnDemand/Standby virtual node와 ready capacity 1을 준비합니다. | 20분 |
+| 04 | [VN2 OnDemand hands-on](docs/04-vn2-ondemand-hands-on.md) | Pod 1개의 create-to-Ready lifecycle을 관찰합니다. | 10분 |
+| 05 | [StandbyPool hands-on](docs/05-standby-pool-hands-on.md) | warm Pod 1개의 lifecycle과 pool refill을 관찰합니다. | 15분 |
+| 06 | [Image Cache hands-on](docs/06-image-cache-hands-on.md) | pool을 `1→0→1`로 재구성하고 cached Pod를 관찰합니다. | 15분 |
+| 07 | [회고, 트러블슈팅, cleanup](docs/07-limitations-troubleshooting-cleanup.md) | 세 관찰을 해석하고 전체 리소스를 삭제합니다. | 10분 |
+|  | **워크숍 합계** |  | **120분** |
 
 Module 03 이후 fresh shell에서 다시 들어올 때의 최소 시작점은 아래 두 줄입니다.
 
@@ -113,19 +103,6 @@ source results/workshop.env
 - [ ] Module 07에서 세 관찰값을 순위화하지 않고 worksheet로 review했다.
 - [ ] `results/workshop.env`를 fresh shell에서 다시 source 할 수 있다.
 - [ ] final cleanup 뒤 `az group exists --name "$RG"` 결과를 `false`로 확인했다.
-
----
-
-## 시간표
-
-| 구간 | 내용 | 예상 시간 |
-|------|------|---------:|
-| 오리엔테이션 | Module 00 | 5분 |
-| 사전 점검과 foundation | Module 01-02 | 45분 |
-| Dual VN2 설치 | Module 03 | 20분 |
-| 세 경로 hands-on 관찰 | Module 04-06 | 40분 |
-| 회고와 cleanup | Module 07 | 10분 |
-| 합계 | 참가자 동선 | 120분 |
 
 ---
 

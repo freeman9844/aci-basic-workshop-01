@@ -177,7 +177,7 @@ find results/evidence -maxdepth 1 -type d -name 'vn2-ondemand-*' | sort | tail -
 | --- | --- | --- |
 | `results/workshop.env` 가 없거나 값이 비어 있다 | `ls results/workshop.env`, `sed -n '1,40p' results/workshop.env` | Module 03까지의 state file을 먼저 복구한 뒤 다시 source 합니다 |
 | kubeconfig가 다른 AKS를 가리킨다 | `kubectl config current-context`, `az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing` | kubeconfig를 다시 덮어쓴 뒤 재시도합니다 |
-| Pod가 `phase=Running`으로 가지 못한다 | `find results/evidence -maxdepth 1 -type d -name 'vn2-ondemand-*' | sort | tail -n 1`, `kubectl get nodes -L benchmark-path -o wide` | 최신 evidence의 `events.txt` 와 `pod-live.yaml`을 먼저 확인한 뒤 VN2 OnDemand path 상태를 점검합니다 |
+| Pod가 `phase=Running`으로 가지 못한다 | `find results/evidence -maxdepth 1 -type d -name 'vn2-ondemand-*' \| sort \| tail -n 1`, `kubectl get nodes -L benchmark-path -o wide` | 최신 evidence의 `events.txt` 와 `pod-live.yaml`을 먼저 확인한 뒤 VN2 OnDemand path 상태를 점검합니다 |
 | `cleanup.status` 가 `failed`다 | `jq '.cleanup' results/observations/vn2-ondemand.json` | 실패 이유를 observation JSON에서 읽고 Module 07 cleanup 전에 namespace 잔여 여부를 다시 확인합니다 |
 
 ## 이전/다음

@@ -70,6 +70,7 @@ module_specific_required = {
         "az aks get-credentials --resource-group \"$RG\" --name \"$AKS\" --overwrite-existing",
         "./scripts/run-hands-on.sh \\\n  --scenario vn2-ondemand \\\n  --resource-group \"$RG\" \\\n  --output-dir results",
         "jq '{scenario, status, node_name, elapsed_ms, cleanup}' \\\n  results/observations/vn2-ondemand.json",
+        "find results/evidence -maxdepth 1 -type d -name 'vn2-ondemand-*' \\| sort \\| tail -n 1",
         "net-new ACI",
         "phase=Pending",
         "phase=Running",
@@ -145,6 +146,11 @@ for filename, contract in module_contract.items():
         raise SystemExit(f"{filename} must not include --standby-pool")
     if filename != "04-vn2-ondemand-hands-on.md" and not has_standby_flag:
         raise SystemExit(f"{filename} must include --standby-pool \"$STANDBY_POOL\"")
+
+    if filename == "04-vn2-ondemand-hands-on.md":
+        bad_table_row = "| Pod가 `phase=Running`으로 가지 못한다 | `find results/evidence -maxdepth 1 -type d -name 'vn2-ondemand-*' | sort | tail -n 1`, `kubectl get nodes -L benchmark-path -o wide` | 최신 evidence의 `events.txt` 와 `pod-live.yaml`을 먼저 확인한 뒤 VN2 OnDemand path 상태를 점검합니다 |"
+        if bad_table_row in text:
+            raise SystemExit(f"{filename} troubleshooting table must escape pipes in the find command")
 
     if filename == "06-image-cache-hands-on.md":
         for snippet in ("--max-ready-capacity 0", "--max-ready-capacity 1", "--expect-running 0", "--expect-running 1"):

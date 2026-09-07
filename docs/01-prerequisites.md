@@ -232,7 +232,7 @@ Owner 권한이 없거나 provider 등록이 끝나지 않았다면 **다음 모
 - fail-fast 블록이 끝난 뒤에도 interactive parent Cloud Shell 에는 persistent `set -e` / `set -u` 가 남지 않는다.
 - quota 부족, Owner 누락, provider 미등록 시 어떤 항목을 먼저 고쳐야 하는지 메모했다.
 
-## 문제 해결
+## 트러블슈팅
 
 | 증상 | 확인할 것 | 확인 명령 | 조치 |
 | --- | --- | --- | --- |
@@ -252,7 +252,4 @@ SUB_ID="$(az account show --query id -o tsv)"
 az rest --method get --url "https://management.azure.com/subscriptions/$SUB_ID/providers/Microsoft.ContainerInstance/locations/koreacentral/usages?api-version=2025-09-01" --output json | jq '.value'
 ```
 
-## 이전/다음
-
-- 이전: [README](../README.md)
-- 다음: [Module 02](./02-azure-foundation.md)
+이전 모듈: [00. 개요](../README.md) · 다음 모듈: [02. AKS NAP 기반 환경 준비](./02-azure-foundation.md)

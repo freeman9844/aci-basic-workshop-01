@@ -26,7 +26,7 @@ if missing:
 
 readme_text = readme.read_text(encoding="utf-8")
 required_readme_strings = [
-    "# ACI Basic 워크솝",
+    "# ACI Basic 워크숍",
     "## 모듈 목차",
     "필수 경로는 Module 01 → 07 순서로 진행합니다.",
     "120분",
@@ -52,9 +52,12 @@ for removed_heading in ("## 빠른 시작", "## 세션 복구 가이드"):
     if removed_heading in readme_text:
         raise SystemExit(f"README must not contain removed section: {removed_heading}")
 
-for replaced_heading in ("## 모듈 구성", "## 문서 흐름", "## 시간표"):
+for replaced_heading in ("## 모듈 구성", "## 문서 흐름"):
     if replaced_heading in readme_text:
         raise SystemExit(f"README must consolidate the replaced section into 모듈 목차: {replaced_heading}")
+
+if "## 시간표" not in readme_text:
+    raise SystemExit("README must include a dedicated 시간표 section")
 
 for forbidden in (
     "180분",
@@ -125,7 +128,7 @@ for module, path in module_files.items():
     first_line = text.splitlines()[0] if text.splitlines() else ""
     if not re.match(rf"^# {module}\. .*[가-힣]", first_line):
         raise SystemExit(f"{path.name} is missing a final Korean title line")
-    for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 이전/다음"):
+    for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트"):
         if heading not in text:
             raise SystemExit(f"{path.name} is missing required section: {heading}")
     duration_match = re.search(r"^## 예상 소요 시간\s*\n\s*(\d+)분\s*$", text, re.M)

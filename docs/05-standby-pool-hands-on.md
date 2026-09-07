@@ -185,7 +185,7 @@ find results/evidence -maxdepth 1 -type d -name 'vn2-standby-*' | sort | tail -n
 - 최신 `results/evidence/` 디렉터리에서 standby pre/post JSON을 열 수 있다.
 - 이 observation이 benchmark 또는 SLA가 아님을 다시 말할 수 있다.
 
-## 문제 해결
+## 트러블슈팅
 
 | 증상 | 확인 명령 | 조치 |
 | --- | --- | --- |
@@ -194,7 +194,4 @@ find results/evidence -maxdepth 1 -type d -name 'vn2-standby-*' | sort | tail -n
 | observation은 성공했지만 refill 근거를 설명하기 어렵다 | `jq '.standby_pool' results/observations/vn2-standby.json` | `pre.running=1`과 `post.running=1`을 직접 읽고, workload가 아직 running인 동안 refill이 일어났다고 설명합니다 |
 | namespace cleanup이 실패했다 | `jq '.cleanup' results/observations/vn2-standby.json` | `cleanup.reason`을 기록하고 Module 07 cleanup 전에 잔여 namespace를 다시 확인합니다 |
 
-## 이전/다음
-
-- 이전: [Module 04](./04-vn2-ondemand-hands-on.md)
-- 다음: [Module 06](./06-image-cache-hands-on.md)
+이전 모듈: [04. VN2 OnDemand hands-on](./04-vn2-ondemand-hands-on.md) · 다음 모듈: [06. Image Cache hands-on](./06-image-cache-hands-on.md)

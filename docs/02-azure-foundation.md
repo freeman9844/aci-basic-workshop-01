@@ -367,7 +367,7 @@ source "$WORKSHOP_STATE"
 - `kubectl get nodes -o wide` 로 foundation node 상태를 확인했다.
 - `results/workshop.env`가 mode `600`이며 fresh Cloud Shell에서 source할 수 있다.
 
-## 문제 해결
+## 트러블슈팅
 
 ### fresh Cloud Shell에서 identity/VNet 권한 재확인
 
@@ -409,7 +409,4 @@ source "$WORKSHOP_STATE"
 | `az aks show` 결과에 `nodeProvisioningMode` 가 `Auto` 로 나오지 않음 | `az aks show -g "$RG" -n "$AKS" --query '{nodeProvisioningMode:nodeProvisioningProfile.mode,nodeResourceGroup:nodeResourceGroup}' -o json` | AKS가 `--node-provisioning-mode Auto --node-provisioning-default-pools None` 으로 생성되었는지 다시 확인 |
 | `kubectl get nodes -o wide` 에서 node가 Ready가 아님 | `kubectl get nodes -o wide` | `az aks get-credentials --resource-group "$RG" --name "$AKS" --overwrite-existing` 를 다시 실행하고 cluster provisioning 상태를 먼저 확인 |
 
-## 이전/다음
-
-- 이전: [Module 01](./01-prerequisites.md)
-- 다음: [Module 03](./03-install-dual-vn2.md)
+이전 모듈: [01. 사전 준비](./01-prerequisites.md) · 다음 모듈: [03. 이중 VN2 설치와 StandbyPool 준비](./03-install-dual-vn2.md)

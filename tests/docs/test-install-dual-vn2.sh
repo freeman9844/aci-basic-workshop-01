@@ -184,7 +184,7 @@ for item in forbidden_strings:
 if re.search(re.escape(stale_aks_path) + r"(?!-nap)", text):
     raise SystemExit("docs/03-install-dual-vn2.md must not route benchmark Pods to the fixed system node")
 
-for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 문제 해결", "## 이전/다음"):
+for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 트러블슈팅"):
     if heading not in text:
         raise SystemExit(f"docs/03-install-dual-vn2.md is missing required section: {heading}")
 

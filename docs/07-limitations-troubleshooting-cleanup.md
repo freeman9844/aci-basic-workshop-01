@@ -214,7 +214,7 @@ source "$WORKSHOP_STATE"
 
 Never pass a wildcard or broad match into cleanup. Save the recovered exact RG back into results/workshop.env before deleting anything.
 
-## 문제 해결
+## 트러블슈팅
 
 | 증상 | 확인 명령 | 조치 |
 | --- | --- | --- |
@@ -234,7 +234,4 @@ Never pass a wildcard or broad match into cleanup. Save the recovered exact RG b
 - `az group exists --name "$RG"` 결과가 최종적으로 `false`다.
 - 필요하면 residual resource IDs를 다시 확인할 수 있다.
 
-## 이전/다음
-
-- 이전: [Module 06](./06-image-cache-hands-on.md)
-- 다음: [README](../README.md)
+이전 모듈: [06. Image Cache hands-on](./06-image-cache-hands-on.md) · 다음 모듈: [00. 개요](../README.md)

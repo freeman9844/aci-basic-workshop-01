@@ -214,7 +214,7 @@ Image Cache annotation은 cache request/template input 입니다. cached path에
 - `results/observations/vn2-standby-cached.json`과 최신 `results/evidence/` 디렉터리를 확인했다.
 - Image Cache annotation이 cache request/template input 이며, 한 번의 관찰만으로는 보편적인 개선을 증명할 수 없습니다 라고 설명할 수 있다.
 
-## 문제 해결
+## 트러블슈팅
 
 | 증상 | 확인 명령 | 조치 |
 | --- | --- | --- |
@@ -223,7 +223,4 @@ Image Cache annotation은 cache request/template input 입니다. cached path에
 | cached observation 뒤에도 해석이 불안하다 | `jq '.standby_pool' results/observations/vn2-standby-cached.json` | pool이 `1→0→1`로 재구성되었는지와 pre/post running 1이 남았는지 먼저 확인합니다 |
 | cleanup 전 image-cache 리소스를 따로 지우고 싶다 | `kubectl get pod -n vn2-image-cache vn2-hands-on-image-cache -o yaml` | 임의로 지우기보다 Module 07 cleanup 흐름에서 정리해 evidence와 cleanup scope를 함께 보존합니다 |
 
-## 이전/다음
-
-- 이전: [Module 05](./05-standby-pool-hands-on.md)
-- 다음: [Module 07](./07-limitations-troubleshooting-cleanup.md)
+이전 모듈: [05. StandbyPool hands-on](./05-standby-pool-hands-on.md) · 다음 모듈: [07. 회고와 cleanup](./07-limitations-troubleshooting-cleanup.md)

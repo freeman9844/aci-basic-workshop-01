@@ -194,7 +194,7 @@ for item in forbidden_foundation:
         raise SystemExit(f"docs/02-azure-foundation.md must not contain outdated text: {item}")
 
 for path, text in ((prereq, prereq_text), (foundation, foundation_text)):
-    for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 문제 해결", "## 이전/다음"):
+    for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 트러블슈팅"):
         if heading not in text:
             raise SystemExit(f"{path.name} is missing required section: {heading}")
 

@@ -95,8 +95,8 @@ if len(readme_lines) < 2:
     fail("README.md must contain a title and summary")
 if not re.match(r"^# .+", readme_lines[0]):
     fail("README.md must start with a level-1 title")
-if readme_lines[0] != "# ACI Basic 워크솝":
-    fail("README.md title must be '# ACI Basic 워크솝'")
+if readme_lines[0] != "# ACI Basic 워크숍":
+    fail("README.md title must be '# ACI Basic 워크숍'")
 if not readme_lines[1].startswith("> "):
     fail("README.md title must be followed by a concise blockquote summary")
 
@@ -105,7 +105,7 @@ required_readme_sections = (
     "## 학습 목표",
     "## 사전 요구사항",
     "## 모듈 목차",
-    "## 완료 기준",
+    "## 시간표",
     "## 비용 개요",
     "## 태그 범례",
     "## 트러블슈팅 색인",
@@ -123,15 +123,22 @@ if not prereq_table_pattern.search(readme_text):
     fail("README.md must present prerequisites as a table")
 
 module_table_pattern = re.compile(
-    r"## 모듈 목차.*?\n\|\s*#\s*\|\s*모듈\s*\|\s*한 줄 설명\s*\|\s*시간\s*\|",
+    r"## 모듈 목차.*?\n\|\s*#\s*\|\s*모듈\s*\|\s*한 줄 설명\s*\|",
     re.S,
 )
 if not module_table_pattern.search(readme_text):
     fail("README.md must include the linked module table of contents")
 
-for replaced_heading in ("## 모듈 구성", "## 문서 흐름", "## 시간표"):
+for replaced_heading in ("## 모듈 구성", "## 문서 흐름"):
     if replaced_heading in readme_text:
         fail(f"README.md must consolidate the replaced section into 모듈 목차: {replaced_heading}")
+
+time_table_pattern = re.compile(
+    r"## 시간표.*?\n\|\s*모듈\s*\|\s*제목\s*\|\s*예상 시간\s*\|",
+    re.S,
+)
+if not time_table_pattern.search(readme_text):
+    fail("README.md must include a dedicated 시간표 table")
 
 for row in legend_rows:
     if row not in readme_text:
@@ -147,7 +154,7 @@ for module, path in module_files.items():
     if not lines[1].startswith("> "):
         fail(f"{path.name} must place a concise blockquote summary after the title")
 
-    for heading in ("## 목표", "## 태그 범례", "## 완료 체크포인트", "## 문제 해결", "## 이전/다음"):
+    for heading in ("## 목표", "## 태그 범례", "## 완료 체크포인트", "## 트러블슈팅"):
         if heading not in text:
             fail(f"{path.name} is missing style section: {heading}")
 
@@ -162,9 +169,9 @@ for module, path in module_files.items():
     for heading, body in step_sections:
         validate_step(path, heading, body)
 
-    nav_section = re.search(r"## 이전/다음\s*\n+(- .+\n){2,}", text)
+    nav_section = re.search(r"이전 모듈: \[.+\]\(.+\) · 다음 모듈: \[.+\]\(.+\)", text)
     if not nav_section:
-        fail(f"{path.name} must keep previous/next navigation as bullet links")
+        fail(f"{path.name} must keep previous/next navigation as a single-line module link")
 
 print("PASS: workshop style consistency contract")
 PY

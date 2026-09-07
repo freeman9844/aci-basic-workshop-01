@@ -439,7 +439,7 @@ az standby-container-group-pool status \
 - `./scripts/check-standby-pool.sh --resource-group "$RG" --name "$STANDBY_POOL" --expect-running 1 --timeout-seconds 1200 --interval-seconds 15` 가 성공했다.
 - 다음 모듈에서 `STANDBY_POOL` 과 `$RG` 를 그대로 재사용할 준비가 되었다.
 
-## 문제 해결
+## 트러블슈팅
 
 | 증상 | 원인 후보 | 확인 명령 | 조치 |
 | --- | --- | --- | --- |
@@ -449,7 +449,4 @@ az standby-container-group-pool status \
 | pool 이 생성되지 않거나 authorization 오류가 난다 | missing RBAC: Standby Pool Resource Provider 또는 kubelet identity 권한 누락 | `az role assignment list --assignee-object-id "$(az ad sp list --display-name 'Standby Pool Resource Provider' --query '[0].id' -o tsv)" --scope "/subscriptions/$(az account show --query id -o tsv)" --output table`, `az aks show -g "$RG" -n "$AKS" --query '{kubelet:identityProfile.kubeletidentity.objectId,nodeRg:nodeResourceGroup}' -o json` | Module 01의 세 가지 구독 역할과 Module 02의 kubelet Contributor 권한을 다시 부여한 뒤 Helm install 재시도 |
 | pool status 가 healthy 로 바뀌지 않거나 running count 가 1 아래에 머문다 | degraded pool 또는 quota/ACI 백엔드 문제 | `./scripts/check-standby-pool.sh --resource-group "$RG" --name "$STANDBY_POOL" --expect-running 1 --timeout-seconds 1200 --interval-seconds 15`, `az standby-container-group-pool status --resource-group "$RG" --name "$STANDBY_POOL" --version latest --output json`, `kubectl get nodes -l benchmark-path=standby -o wide`, `kubectl get events -A --sort-by=.metadata.creationTimestamp \| tail -n 40` | degraded 원인을 먼저 캡처하고 quota, provider 상태, region health 를 확인한 뒤 capacity가 1로 회복될 때까지 다음 모듈로 넘어가지 않음 |
 
-## 이전/다음
-
-- 이전: [Module 02](./02-azure-foundation.md)
-- 다음: [Module 04](./04-vn2-ondemand-hands-on.md)
+이전 모듈: [02. AKS NAP 기반 환경 준비](./02-azure-foundation.md) · 다음 모듈: [04. VN2 OnDemand hands-on](./04-vn2-ondemand-hands-on.md)

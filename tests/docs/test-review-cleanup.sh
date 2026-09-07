@@ -20,7 +20,7 @@ if not module07.exists():
 
 text07 = module07.read_text(encoding="utf-8")
 
-for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 문제 해결", "## 이전/다음"):
+for heading in ("## 목표", "## 예상 소요 시간", "## 시작 전 상태", "## 진행 순서", "## 완료 체크포인트", "## 트러블슈팅"):
     if heading not in text07:
         raise SystemExit(f"docs/07-limitations-troubleshooting-cleanup.md is missing required section: {heading}")
 
@@ -72,8 +72,8 @@ required_07 = [
     "ErrImagePull",
     "quota",
     "NAT Gateway",
-    "- 이전: [Module 06](./06-image-cache-hands-on.md)",
-    "- 다음: [README](../README.md)",
+    "](./06-image-cache-hands-on.md)",
+    "](../README.md)",
 ]
 
 for item in required_07:

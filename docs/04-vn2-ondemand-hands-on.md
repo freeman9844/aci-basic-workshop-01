@@ -171,7 +171,7 @@ find results/evidence -maxdepth 1 -type d -name 'vn2-ondemand-*' | sort | tail -
 - `phase=Pending` 과 `phase=Running` 이 각각 무엇을 의미하는지 설명할 수 있다.
 - 한 번의 hands-on 관찰 결과는 benchmark 또는 SLA가 아닙니다 라고 다시 말할 수 있다.
 
-## 문제 해결
+## 트러블슈팅
 
 | 증상 | 확인 명령 | 조치 |
 | --- | --- | --- |
@@ -180,7 +180,4 @@ find results/evidence -maxdepth 1 -type d -name 'vn2-ondemand-*' | sort | tail -
 | Pod가 `phase=Running`으로 가지 못한다 | `find results/evidence -maxdepth 1 -type d -name 'vn2-ondemand-*' \| sort \| tail -n 1`, `kubectl get nodes -L benchmark-path -o wide` | 최신 evidence의 `events.txt` 와 `pod-live.yaml`을 먼저 확인한 뒤 VN2 OnDemand path 상태를 점검합니다 |
 | `cleanup.status` 가 `failed`다 | `jq '.cleanup' results/observations/vn2-ondemand.json` | 실패 이유를 observation JSON에서 읽고 Module 07 cleanup 전에 namespace 잔여 여부를 다시 확인합니다 |
 
-## 이전/다음
-
-- 이전: [Module 03](./03-install-dual-vn2.md)
-- 다음: [Module 05](./05-standby-pool-hands-on.md)
+이전 모듈: [03. 이중 VN2 설치와 StandbyPool 준비](./03-install-dual-vn2.md) · 다음 모듈: [05. StandbyPool hands-on](./05-standby-pool-hands-on.md)

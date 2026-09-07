@@ -36,8 +36,7 @@ required_headings = (
     "## 시작 전 상태",
     "## 진행 순서",
     "## 완료 체크포인트",
-    "## 문제 해결",
-    "## 이전/다음",
+    "## 트러블슈팅",
 )
 
 common_required = (
@@ -116,13 +115,9 @@ for filename, contract in module_contract.items():
     if int(duration_match.group(1)) != contract["duration"]:
         raise SystemExit(f"{filename} must use duration {contract['duration']}분")
 
-    previous_number = f"0{int(filename[:2]) - 1}"
-    previous_line = f"- 이전: [Module {previous_number}]({contract['previous']})"
-    next_number = f"0{int(filename[:2]) + 1}" if filename[:2] != "06" else "07"
-    next_line = f"- 다음: [Module {next_number}]({contract['next']})"
-    if previous_line not in text:
+    if f"]({contract['previous']})" not in text:
         raise SystemExit(f"{filename} must link back to {contract['previous']}")
-    if next_line not in text:
+    if f"]({contract['next']})" not in text:
         raise SystemExit(f"{filename} must link forward to {contract['next']}")
 
     scenario = contract["scenario"]
